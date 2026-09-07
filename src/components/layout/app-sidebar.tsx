@@ -40,6 +40,7 @@ const mainNav = [
     children: [
       { title: "All Projects", href: "/projects" },
       { title: "Side Projects", href: "/side-projects" },
+      { title: "Trash", href: "/trash" },
     ],
   },
   { title: "Hosting Clients", href: "/hosting", icon: Globe },

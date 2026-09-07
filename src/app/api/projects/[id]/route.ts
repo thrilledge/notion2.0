@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { projectAssignees, projects } from "@/lib/db/schema";
+import { projectAssignees, projects, notifications } from "@/lib/db/schema";
 import { getAuthz, canViewProject, canEditProject, canManageWorkspace, roleInWorkspace } from "@/lib/authz";
 
 const updateSchema = z.object({
@@ -123,6 +123,17 @@ export async function PATCH(request: Request, ctx: RouteContext) {
   }
 
   try {
+    // Capture prior assignees so we can notify newly-assigned users and
+    // comment watchers below.
+    let previousAssigneeIds: string[] = [];
+    if (assigneeIds !== undefined) {
+      const prevRows = await db
+        .select({ userId: projectAssignees.userId })
+        .from(projectAssignees)
+        .where(eq(projectAssignees.projectId, id));
+      previousAssigneeIds = prevRows.map((r) => r.userId);
+    }
+
     const values = {
       ...data,
       ...(dueDate !== undefined && {
@@ -146,6 +157,53 @@ export async function PATCH(request: Request, ctx: RouteContext) {
       if (assigneeIds.length > 0) {
         await db.insert(projectAssignees).values(
           assigneeIds.map((userId) => ({ projectId: id, userId }))
+        );
+      }
+    }
+
+    // ---- Notifications ----
+    const assignmentsThatChanged =
+      assigneeIds !== undefined &&
+      JSON.stringify([...assigneeIds].sort()) !==
+        JSON.stringify([...previousAssigneeIds].sort());
+
+    // Notify newly-assigned users.
+    if (assignmentsThatChanged) {
+      const newlyAssigned = assigneeIds!.filter(
+        (u) => !previousAssigneeIds.includes(u) && u !== authz.userId
+      );
+      if (newlyAssigned.length > 0) {
+        await db.insert(notifications).values(
+          newlyAssigned.map((uid) => ({
+            userId: uid,
+            type: "assignment" as const,
+            title: "New assignment",
+            body: `You were assigned to ${updated.name}`,
+            link: `/projects/${id}`,
+            projectId: id,
+          }))
+        );
+      }
+    }
+
+    // Notify current assignees (except the actor) when comments changed.
+    if (
+      data.comments !== undefined &&
+      data.comments !== null &&
+      data.comments.trim().length > 0
+    ) {
+      let watcherIds = assigneeIds ?? previousAssigneeIds;
+      watcherIds = watcherIds.filter((u) => u !== authz.userId);
+      if (watcherIds.length > 0) {
+        await db.insert(notifications).values(
+          watcherIds.map((uid) => ({
+            userId: uid,
+            type: "comment" as const,
+            title: "New comment",
+            body: `${updated.name}`,
+            link: `/projects/${id}`,
+            projectId: id,
+          }))
         );
       }
     }

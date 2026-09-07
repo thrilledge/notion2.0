@@ -116,6 +116,7 @@ export const projects = pgTable(
     }),
     notionPageId: text("notion_page_id").unique(),
     sortOrder: doublePrecision("sort_order").notNull().default(0),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -124,6 +125,7 @@ export const projects = pgTable(
     index("projects_assignee_idx").on(t.assigneeId),
     index("projects_type_idx").on(t.type),
     index("projects_workspace_idx").on(t.workspaceId),
+    index("projects_deleted_idx").on(t.deletedAt),
     uniqueIndex("projects_notion_idx").on(t.notionPageId),
   ]
 );
@@ -376,6 +378,31 @@ export const wikiPages = pgTable(
   (t) => [index("wiki_page_idx").on(t.pageId)]
 );
 
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type", {
+      enum: ["assignment", "comment", "due", "system"],
+    }).notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    link: text("link"),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    readAt: timestamp("read_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("notifications_user_idx").on(t.userId),
+    index("notifications_read_idx").on(t.userId, t.readAt),
+  ]
+);
+
 export const activityLog = pgTable(
   "activity_log",
   {
@@ -423,3 +450,5 @@ export type Meeting = typeof meetings.$inferSelect;
 export type NewMeeting = typeof meetings.$inferInsert;
 export type WikiPage = typeof wikiPages.$inferSelect;
 export type ActivityLog = typeof activityLog.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
+export type NewNotification = typeof notifications.$inferInsert;

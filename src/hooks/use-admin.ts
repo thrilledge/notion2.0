@@ -46,6 +46,8 @@ async function j<T>(res: Response): Promise<T> {
 export type CurrentUser = {
   userId: string;
   email: string;
+  fullName: string | null;
+  avatarUrl: string | null;
   isGlobalOwner: boolean;
   roles: Record<string, "owner" | "member">;
 };
@@ -57,6 +59,30 @@ export function useCurrentUser() {
       const res = await fetch("/api/me", { cache: "no-store" });
       const json = await j<{ data: CurrentUser }>(res);
       return json.data;
+    },
+  });
+}
+
+export function useUpdateProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      fullName,
+      avatarUrl,
+    }: {
+      fullName: string;
+      avatarUrl?: string | null;
+    }) => {
+      const res = await fetch("/api/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullName, avatarUrl }),
+      });
+      return j(res);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: ["workspace-members"] });
     },
   });
 }

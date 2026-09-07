@@ -16,6 +16,7 @@ import type {
   ProjectContentBlock,
 } from "@/hooks/use-project-content";
 import { useCreateBlock, useUpdateBlock } from "@/hooks/use-project-content";
+import { sanitizeUrl } from "@/lib/security";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -85,8 +86,9 @@ function spansToHtml(spans?: SpanStyle[]): string {
       if (s.italic) inner = `<i>${inner}</i>`;
       if (s.underline) inner = `<u>${inner}</u>`;
       if (s.strikethrough) inner = `<s>${inner}</s>`;
-      if (s.href)
-        inner = `<a href="${escapeHtml(s.href)}" target="_blank" rel="noreferrer" class="text-blue-600 underline underline-offset-2 hover:text-blue-500">${inner}</a>`;
+      const safeHref = sanitizeUrl(s.href);
+      if (safeHref)
+        inner = `<a href="${escapeHtml(safeHref)}" target="_blank" rel="noreferrer" class="text-blue-600 underline underline-offset-2 hover:text-blue-500">${inner}</a>`;
       return inner;
     })
     .join("");
@@ -121,7 +123,7 @@ function htmlToSpans(html: string): SpanStyle[] {
     if (tag === "s" || tag === "strike" || tag === "del")
       style.strikethrough = true;
     if (tag === "code") style.code = true;
-    if (tag === "a") style.href = el.getAttribute("href") ?? undefined;
+    if (tag === "a") style.href = sanitizeUrl(el.getAttribute("href")) ?? undefined;
     for (const child of Array.from(el.childNodes)) walk(child, style);
   };
 

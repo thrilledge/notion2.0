@@ -25,6 +25,7 @@ interface ListParams {
   offset?: number;
   sortBy?: "sortOrder" | "name" | "updatedAt" | "createdAt" | "dueDate" | "status";
   sortDir?: "asc" | "desc";
+  trashed?: boolean;
 }
 
 interface ListResponse {
@@ -153,6 +154,67 @@ export function useDeleteProject() {
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete project");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useProjectAction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      action,
+      name,
+    }: {
+      id: string;
+      action: "trash" | "restore" | "duplicate";
+      name?: string;
+    }) => {
+      const res = await fetch(`/api/projects/${id}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, name }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "Action failed");
+      }
+      return res.json();
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["projects", vars.id] });
+      if (vars.action === "duplicate") {
+        queryClient.invalidateQueries({ queryKey: ["projects"] });
+      }
+    },
+  });
+}
+
+export function useTrashedProjects() {
+  return useQuery({
+    queryKey: ["projects", { trashed: true }],
+    queryFn: () => fetchProjects({ trashed: true, limit: 1000 }),
+  });
+}
+
+export function useImportProjects() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (items: ProjectInput[]) => {
+      const res = await fetch("/api/projects/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "Import failed");
+      }
       return res.json();
     },
     onSuccess: () => {

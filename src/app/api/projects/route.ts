@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, ilike, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { projectAssignees, projects } from "@/lib/db/schema";
@@ -17,6 +17,7 @@ const querySchema = z.object({
     .enum(["sortOrder", "name", "updatedAt", "createdAt", "dueDate", "status"])
     .default("sortOrder"),
   sortDir: z.enum(["asc", "desc"]).default("desc"),
+  trashed: z.coerce.boolean().default(false),
 });
 
 export async function GET(request: Request) {
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const { type, status, result, assigneeId, search, limit, offset, sortBy, sortDir } =
+  const { type, status, result, assigneeId, search, limit, offset, sortBy, sortDir, trashed } =
     parsed.data;
 
   const ctx = await getAuthz();
@@ -50,6 +51,10 @@ export async function GET(request: Request) {
     }
 
     const conditions = [inArray(projects.id, accessibleIds)];
+
+    // Trash filter: by default exclude trashed projects; when requested, only
+    // show trashed ones.
+    conditions.push(trashed ? sql`${projects.deletedAt} is not null` : isNull(projects.deletedAt));
 
     if (type) conditions.push(eq(projects.type, type));
     if (status)

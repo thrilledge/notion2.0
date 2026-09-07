@@ -187,6 +187,42 @@ export function ResultSelectInline({
   );
 }
 
+export function CommentsInline({
+  projectId,
+  value,
+  placeholder = "Add comment",
+}: {
+  projectId: string;
+  value: string | null | undefined;
+  placeholder?: string;
+}) {
+  const update = useUpdateProject();
+  const submit = (next: string) => {
+    const trimmed = next.trim();
+    if (trimmed === (value ?? "").trim()) return;
+    update.mutate({
+      id: projectId,
+      data: { comments: trimmed || null },
+    });
+  };
+  return (
+    <input
+      type="text"
+      defaultValue={value ?? ""}
+      onBlur={(e) => submit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      placeholder={placeholder}
+      title="Edit comment"
+      className="w-full truncate rounded bg-transparent px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none"
+    />
+  );
+}
+
 export function DueDateInline({
   projectId,
   value,

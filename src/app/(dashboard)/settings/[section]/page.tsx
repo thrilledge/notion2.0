@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
+import { getAuthz } from "@/lib/authz";
 import { SettingsShell } from "@/components/settings/settings-shell";
+import { ProfilePanel } from "@/components/settings/panels/profile-panel";
 import { GeneralPanel } from "@/components/settings/panels/general-panel";
 import { AppearancePanel } from "@/components/settings/panels/appearance-panel";
 import { MembersPanel } from "@/components/settings/panels/members-panel";
@@ -10,13 +12,17 @@ import { NotificationsPanel } from "@/components/settings/panels/notifications-p
 import { SecurityPanel } from "@/components/settings/panels/security-panel";
 
 const sections: Record<string, { title: string; description: string }> = {
+  profile: {
+    title: "My Profile",
+    description: "Your name, avatar, and the roles you hold across workspaces.",
+  },
   general: {
     title: "General",
     description: "Workspace overview and basic information.",
   },
   appearance: {
     title: "Appearance",
-    description: "Customize how the workspace looks.",
+    description: "Customize how the app looks for you.",
   },
   members: {
     title: "Members",
@@ -44,6 +50,15 @@ const sections: Record<string, { title: string; description: string }> = {
   },
 };
 
+/** Workspace-admin sections: hidden from plain members (Notion-style). */
+const WORKSPACE_SECTIONS = new Set([
+  "general",
+  "members",
+  "access",
+  "workspaces",
+  "projects",
+]);
+
 export default async function SettingsSection({
   params,
 }: {
@@ -52,10 +67,21 @@ export default async function SettingsSection({
   const { section } = await params;
   if (!sections[section]) notFound();
 
+  const authz = await getAuthz();
+  if (!authz) notFound();
+
+  const isManager =
+    authz.isGlobalOwner ||
+    Array.from(authz.memberships.values()).some((r) => r === "owner");
+
+  // Members get only their personal settings; workspace administration stays
+  // with workspace owners and the global owner.
+  if (WORKSPACE_SECTIONS.has(section) && !isManager) notFound();
+
   const { title, description } = sections[section];
 
   return (
-    <SettingsShell>
+    <SettingsShell isManager={isManager}>
       <div className="space-y-6">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
@@ -71,6 +97,8 @@ export default async function SettingsSection({
 
 function SectionPanel({ section }: { section: string }) {
   switch (section) {
+    case "profile":
+      return <ProfilePanel />;
     case "general":
       return <GeneralPanel />;
     case "appearance":

@@ -43,8 +43,9 @@ export async function GET(
   const rel = key.join("/");
   const full = path.resolve(LOCAL_STORAGE_DIR, rel);
 
-  // Prevent path traversal
-  if (!full.startsWith(LOCAL_STORAGE_DIR)) {
+  // Prevent path traversal: the resolved path must stay inside the storage dir.
+  const relative = path.relative(LOCAL_STORAGE_DIR, full);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     return new NextResponse("Not found", { status: 404 });
   }
 
@@ -97,6 +98,7 @@ export async function GET(
   const res = new NextResponse(new Uint8Array(body) as any, {
     headers: {
       "Content-Type": mime,
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=31536000, immutable",
     },
   });

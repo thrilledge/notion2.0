@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import { MAX_UPLOAD_BYTES } from "@/lib/security";
 
 export const LOCAL_STORAGE_DIR = path.resolve(
   process.env.LOCAL_STORAGE_DIR ?? path.join(process.cwd(), "uploads")
@@ -35,6 +36,9 @@ export function storeLocalFile(
   originalName: string,
   data: Buffer
 ): StoredFile {
+  if (data.length > MAX_UPLOAD_BYTES) {
+    throw new Error("File exceeds the maximum allowed size");
+  }
   const cleanName = sanitize(originalName) || "file";
   const relativeDir = path.posix.join(folder, id);
   const dir = ensureDir(relativeDir);
@@ -64,6 +68,19 @@ export function storeLocalFileFromDisk(
 
 export function localFileAbsolutePath(key: string): string {
   return path.join(LOCAL_STORAGE_DIR, key);
+}
+
+/** Delete a previously stored local file. Missing files are a no-op. */
+export function deleteLocalFile(key: string): void {
+  const full = path.resolve(LOCAL_STORAGE_DIR, key);
+  if (path.relative(LOCAL_STORAGE_DIR, full).startsWith("..")) return;
+  try {
+    if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+      fs.unlinkSync(full);
+    }
+  } catch {
+    // Best effort: an orphan file is harmless compared to a failed delete.
+  }
 }
 
 export function publicUrlToAbsolutePath(publicUrl: string): string | null {

@@ -12,6 +12,7 @@ export async function POST(request: Request) {
     await supabase.auth.signOut();
   }
 
-  const origin = request.headers.get("origin") ?? process.env.NEXT_PUBLIC_APP_URL!;
-  return NextResponse.redirect(`${origin}/login`);
+  // Never trust the Origin/Referer headers for the redirect target (open
+  // redirect / phishing); always return the caller to our own login page.
+  return NextResponse.redirect(new URL("/login", request.url));
 }

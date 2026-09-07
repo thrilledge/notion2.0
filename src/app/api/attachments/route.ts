@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { attachments, hostingClients, docs, meetings } from "@/lib/db/schema";
 import { storeLocalFile } from "@/lib/storage";
+import { isAllowedUpload, MAX_UPLOAD_BYTES } from "@/lib/security";
 import {
   getAuthz,
   getAccessibleProjectIds,
@@ -124,6 +125,20 @@ export async function POST(request: Request) {
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      { error: "File exceeds the maximum allowed size" },
+      { status: 413 }
+    );
+  }
+
+  if (!isAllowedUpload(file.name)) {
+    return NextResponse.json(
+      { error: "File type is not allowed" },
+      { status: 400 }
+    );
   }
 
   const rawMeta = form.get("meta");

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ProjectContentBlock } from "@/hooks/use-project-content";
+import { sanitizeUrl } from "@/lib/security";
 
 function renderSpans(
   spans?: { text: string; href?: string | null; bold?: boolean; italic?: boolean; strikethrough?: boolean; underline?: boolean; code?: boolean }[]
@@ -15,10 +16,11 @@ function renderSpans(
         if (s.underline) node = <u>{node}</u>;
         if (s.strikethrough) node = <s>{node}</s>;
         if (s.code) node = <code>{node}</code>;
-        if (s.href)
+        const safeHref = sanitizeUrl(s.href);
+        if (safeHref)
           node = (
             <a
-              href={s.href}
+              href={safeHref}
               target="_blank"
               rel="noreferrer"
               className="text-blue-600 underline hover:text-blue-500"

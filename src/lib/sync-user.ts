@@ -20,11 +20,16 @@ interface AuthUserLike {
 }
 
 /**
- * On the very first sign-in, promote that user to global Owner and create the
- * default workspace, attaching all existing unscoped (Notion-imported) data to
- * it. Every later user is a plain member with NO workspace access and NO data.
+ * On a fresh deployment with no global owner yet, promote the first sign-in to
+ * global Owner, create the default workspace, and attach all unscoped
+ * (Notion-imported) data to it.
  *
- * Idempotent: runs only while there is no workspace yet.
+ * This is privileged and MUST be explicitly enabled per deployment via
+ * `ALLOW_BOOTSTRAP_OWNER=true`; otherwise the first person who signs in would
+ * silently become the owner of everything. For a normal install, create the
+ * owner account with `scripts/create-owner-account.ts` instead.
+ *
+ * Idempotent: with the flag on, it runs only while there is no workspace yet.
  */
 export async function ensureWorkspaceBootstrap() {
   const [existingWorkspace] = await db
@@ -38,6 +43,17 @@ export async function ensureWorkspaceBootstrap() {
     .where(eq(users.role, "owner"))
     .limit(1);
 
+  if (existingWorkspace && owner.length > 0) {
+    return { workspaceId: existingWorkspace.id, ownerId: owner[0].id };
+  }
+
+  if (process.env.ALLOW_BOOTSTRAP_OWNER !== "true") {
+    // Do not create or promote anything without an explicit opt-in.
+    return existingWorkspace
+      ? { workspaceId: existingWorkspace.id, ownerId: owner[0]?.id ?? null }
+      : null;
+  }
+
   // If a workspace already exists but there is no global owner yet, still look
   // for a workspace-level owner to attach data to.
   const wsOwner =
@@ -48,8 +64,6 @@ export async function ensureWorkspaceBootstrap() {
           .where(eq(workspaceMembers.role, "owner"))
           .limit(1)
       : null;
-
-  if (existingWorkspace && owner.length > 0) return { workspaceId: existingWorkspace.id, ownerId: owner[0].id };
 
   if (wsOwner) {
     const ownerId = wsOwner[0].userId;
@@ -143,33 +157,25 @@ export async function syncUser(authUser: AuthUserLike) {
     }
     userId = row.id;
   } else {
-    // Try to adopt an existing users row that shares the same email
-    // (e.g. a Notion-imported user) by linking them to this auth id.
-    const byEmail = await db
-      .select()
-      .from(users)
-      .where(sql`lower(${users.email}) = ${email}`)
-      .limit(1);
-
-    if (byEmail.length && byEmail[0].id !== authUser.id) {
-      userId = byEmail[0].id;
-    } else {
-      const [created] = await db
-        .insert(users)
-        .values({
-          id: authUser.id,
-          email,
-          fullName,
-          role: "member",
-          status: "active",
-        })
-        .onConflictDoNothing({ target: users.id })
-        .returning();
-      userId =
-        created?.id ??
-        (await db.select({ id: users.id }).from(users).where(eq(users.id, authUser.id)).limit(1))[0]?.id ??
-        null;
-    }
+    // Never adopt a pre-existing Users row that shares the email (e.g. a
+    // Notion-imported member): that would hand the newcomer that row's
+    // workspace access and role under a different auth identity. Always create
+    // a fresh row keyed by the authenticated user id.
+    const [created] = await db
+      .insert(users)
+      .values({
+        id: authUser.id,
+        email,
+        fullName,
+        role: "member",
+        status: "active",
+      })
+      .onConflictDoNothing({ target: users.id })
+      .returning();
+    userId =
+      created?.id ??
+      (await db.select({ id: users.id }).from(users).where(eq(users.id, authUser.id)).limit(1))[0]?.id ??
+      null;
   }
 
   if (!userId) return null;

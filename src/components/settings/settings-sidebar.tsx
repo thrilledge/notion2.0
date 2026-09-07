@@ -11,63 +11,40 @@ import {
   Palette,
   Bell,
   Lock,
+  UserCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const sections = [
-  {
-    slug: "general",
-    label: "General",
-    icon: Settings2,
-  },
-  {
-    slug: "appearance",
-    label: "Appearance",
-    icon: Palette,
-  },
-  {
-    slug: "members",
-    label: "Members",
-    icon: Users,
-  },
-  {
-    slug: "access",
-    label: "Access & Permissions",
-    icon: ShieldCheck,
-  },
-  {
-    slug: "workspaces",
-    label: "Workspaces",
-    icon: Building2,
-  },
-  {
-    slug: "projects",
-    label: "Projects",
-    icon: FolderKanban,
-  },
-  {
-    slug: "notifications",
-    label: "Notifications",
-    icon: Bell,
-  },
-  {
-    slug: "security",
-    label: "Security",
-    icon: Lock,
-  },
-];
+interface SettingsSidebarProps {
+  isManager?: boolean;
+}
 
-export function SettingsSidebar() {
+export function SettingsSidebar({ isManager = true }: SettingsSidebarProps) {
   const pathname = usePathname();
-  const active = pathname.split("/")[2] ?? "general";
+  const active = pathname.split("/")[2] ?? "profile";
+
+  const personalSections = [
+    { slug: "profile", label: "Profile", icon: UserCircle },
+    { slug: "appearance", label: "Appearance", icon: Palette },
+    { slug: "notifications", label: "Notifications", icon: Bell },
+    { slug: "security", label: "Security", icon: Lock },
+  ];
+
+  const workspaceSections = [
+    { slug: "general", label: "General", icon: Settings2 },
+    { slug: "members", label: "Members", icon: Users },
+    { slug: "access", label: "Access & Permissions", icon: ShieldCheck },
+    { slug: "workspaces", label: "Workspaces", icon: Building2 },
+    { slug: "projects", label: "Projects", icon: FolderKanban },
+  ];
 
   return (
     <nav className="w-full min-w-0">
       <p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Settings
+        My settings
       </p>
       <ul className="space-y-0.5">
-        {sections.map((section) => {
+        {personalSections.map((section) => {
           const isActive = active === section.slug;
           return (
             <li key={section.slug}>
@@ -87,6 +64,35 @@ export function SettingsSidebar() {
           );
         })}
       </ul>
+
+      {isManager && (
+        <>
+          <p className="mb-3 mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Workspace
+          </p>
+          <ul className="space-y-0.5">
+            {workspaceSections.map((section) => {
+              const isActive = active === section.slug;
+              return (
+                <li key={section.slug}>
+                  <Link
+                    href={`/settings/${section.slug}`}
+                    className={cn(
+                      "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+                      isActive
+                        ? "bg-accent font-medium text-accent-foreground"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    )}
+                  >
+                    <section.icon className="size-4 shrink-0" />
+                    <span className="truncate">{section.label}</span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
     </nav>
   );
 }

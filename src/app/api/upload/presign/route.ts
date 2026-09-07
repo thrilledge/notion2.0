@@ -4,6 +4,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
 import { r2Client, R2_CONFIG } from "@/lib/r2";
 import { createClient } from "@/lib/supabase/server";
+import { isAllowedUpload } from "@/lib/security";
 
 const presignSchema = z.object({
   filename: z.string().min(1).max(255),
@@ -41,6 +42,14 @@ export async function POST(request: Request) {
   }
 
   const { filename, contentType, size, folder } = parsed.data;
+
+  if (!isAllowedUpload(filename)) {
+    return NextResponse.json(
+      { error: "File type is not allowed" },
+      { status: 400 }
+    );
+  }
+
   const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const key = `${folder}/${user.id}/${crypto.randomUUID()}-${safeName}`;
 

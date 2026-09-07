@@ -2,14 +2,24 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { format } from "date-fns";
-import { Check, GripVertical, Loader2, Plus, UserRound, X } from "lucide-react";
+import {
+  Check,
+  Download,
+  GripVertical,
+  Loader2,
+  Plus,
+  Trash2,
+  Upload,
+  UserRound,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useTeam } from "@/hooks/use-team";
 import {
   useCreateProject,
   useReorderProject,
   useProjects,
+  useImportProjects,
   type ProjectWithAssignees,
 } from "@/hooks/use-projects";
 import {
@@ -28,17 +38,36 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   AssigneeAvatar,
   AssigneeMultiSelect,
-  DueDateInline,
+  CommentsInline,
   ResultSelectInline,
 } from "@/components/projects/inline-editors";
-import { StatusBadge } from "@/components/shared/status-badges";
+import { ProjectActionsMenu } from "@/components/projects/project-actions-menu";
+import {
+  toExportRows,
+  rowsToCsv,
+  downloadFile,
+  parseImportFile,
+  type ProjectImportItem,
+} from "@/components/projects/import-export";
 import { cn } from "@/lib/utils";
 
-const STATUS_OPTIONS = [
+const RESULT_OPTIONS = [
   { value: "not_started", label: "Not started" },
   { value: "in_progress", label: "In progress" },
+  { value: "stuck", label: "Stuck" },
+  { value: "pending_review", label: "Pending for review" },
+  { value: "company_work", label: "Company work" },
+  { value: "upcoming_renewal", label: "Upcoming renewal" },
   { value: "done", label: "Done" },
 ] as const;
 
@@ -113,15 +142,15 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
   const createProject = useCreateProject();
 
   const [name, setName] = useState("");
-  const [status, setStatus] = useState<string>("not_started");
-  const [due, setDue] = useState("");
+  const [result, setResult] = useState<string>("not_started");
+  const [comments, setComments] = useState("");
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
 
   if (!open) {
     return (
       <TableRow className="hover:bg-transparent">
-        <TableCell colSpan={6} className="py-2">
+        <TableCell colSpan={7} className="py-2">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -144,16 +173,24 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
       {
         name: name.trim(),
         type,
-        status: status as "not_started" | "in_progress" | "done",
-        dueDate: due ? new Date(due).toISOString() : null,
+        status: "not_started",
+        result: result as
+          | "company_work"
+          | "not_started"
+          | "stuck"
+          | "pending_review"
+          | "in_progress"
+          | "upcoming_renewal"
+          | "done",
+        comments: comments.trim() ? comments.trim() : undefined,
         assigneeIds: assigneeIds.length ? assigneeIds : undefined,
       },
       {
         onSuccess: () => {
           toast.success("Project created");
           setName("");
-          setStatus("not_started");
-          setDue("");
+          setResult("not_started");
+          setComments("");
           setAssigneeIds([]);
           setOpen(false);
         },
@@ -167,6 +204,8 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
 
   return (
     <TableRow className="bg-muted/30">
+      <TableCell className="w-8 py-1.5 pr-0" />
+      <TableCell className="w-8 py-1.5 pr-0" />
       <TableCell className="py-1.5">
         <input
           autoFocus
@@ -179,33 +218,31 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
       </TableCell>
       <TableCell>
         <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          value={result}
+          onChange={(e) => setResult(e.target.value)}
           className={inputCls}
         >
-          {STATUS_OPTIONS.map((o) => (
+          {RESULT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
         </select>
       </TableCell>
-      <TableCell className="text-muted-foreground text-xs">—</TableCell>
       <TableCell>
         <AssigneePicker
           value={assigneeIds}
           onChange={setAssigneeIds}
         />
       </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-1">
-          <input
-            type="date"
-            value={due}
-            onChange={(e) => setDue(e.target.value)}
-            className="border-0 bg-transparent p-0 text-xs focus-visible:outline-none"
-          />
-        </div>
+      <TableCell className="max-w-[280px]">
+        <input
+          value={comments}
+          onChange={(e) => setComments(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          placeholder="Add comment"
+          className={inputCls}
+        />
       </TableCell>
       <TableCell className="whitespace-nowrap">
         <div className="flex items-center gap-1">
@@ -214,6 +251,7 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
             size="xs"
             onClick={submit}
             disabled={createProject.isPending}
+            className="shrink-0"
           >
             {createProject.isPending ? (
               <Loader2 className="size-3 animate-spin" />
@@ -224,7 +262,7 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
           <button
             type="button"
             onClick={() => setOpen(false)}
-            className="rounded p-1 text-muted-foreground hover:bg-accent"
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent"
             title="Cancel"
           >
             <X className="size-3.5" />
@@ -263,6 +301,75 @@ export function ProjectsTable({
   const [overId, setOverId] = useState<string | null>(null);
   const [dropPos, setDropPos] = useState<"before" | "after" | null>(null);
   const rowEls = useRef<Record<string, HTMLTableRowElement | null>>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const importProjects = useImportProjects();
+  const { data: team = [] } = useTeam();
+  const emailById = useMemo(
+    () => new Map(team.filter((m) => m.email).map((m) => [m.id, m.email as string])),
+    [team]
+  );
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelected((prev) => {
+      const allIds = projects.map((p) => p.id);
+      const allSelected = allIds.every((id) => prev.has(id));
+      const next = new Set<string>();
+      if (!allSelected) allIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const handleExport = (format: "csv" | "json") => {
+    const rows = toExportRows(
+      projects.filter((p) => selected.has(p.id)),
+      emailById
+    );
+    if (rows.length === 0) {
+      toast.error("No projects selected");
+      return;
+    }
+    const ts = new Date().toISOString().slice(0, 10);
+    if (format === "csv") {
+      downloadFile(rowsToCsv(rows), `projects-${ts}.csv`, "text/csv;charset=utf-8");
+    } else {
+      downloadFile(
+        JSON.stringify(rows, null, 2),
+        `projects-${ts}.json`,
+        "application/json"
+      );
+    }
+    toast.success(`Exported ${rows.length} project(s)`);
+  };
+
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const items = (await parseImportFile(file)).filter(
+        (i) => i.name
+      ) as unknown as import("@/hooks/use-projects").ProjectInput[];
+      if (items.length === 0) {
+        toast.error("No projects found in file");
+        return;
+      }
+      importProjects.mutate(items, {
+        onSuccess: () => toast.success(`Imported ${items.length} project(s)`),
+        onError: (e) => toast.error(e.message),
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to parse file");
+    }
+  };
 
   const setRowRef =
     (id: string) => (el: HTMLTableRowElement | null) => {
@@ -325,19 +432,75 @@ export function ProjectsTable({
 
   return (
     <div className="rounded-md border">
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <div className="ml-auto flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <Download className="size-4" />
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Export selected</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => handleExport("csv")}>
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("json")}>
+                  Export as JSON
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline">
+                  <Upload className="size-4" />
+                  Import
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Import projects</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                  Import from CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                  Import from JSON
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+              <Trash2 className="size-4" />
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <input
+                type="checkbox"
+                checked={
+                  projects.length > 0 &&
+                  projects.every((p) => selected.has(p.id))
+                }
+                onChange={toggleAll}
+                title="Select all"
+              />
+            </TableHead>
             <TableHead className="w-8" />
-            <TableHead className="w-[36%]">Name</TableHead>
-            <TableHead>Status</TableHead>
+            <TableHead className="w-[34%]">Name</TableHead>
             <TableHead>Result</TableHead>
             <TableHead>Assignee</TableHead>
-            <TableHead>Due Date</TableHead>
-            <TableHead>Updated</TableHead>
+            <TableHead>Comments</TableHead>
+            <TableHead className="w-16" />
           </TableRow>
         </TableHeader>
         <TableBody>
+          {!isLoading && !isError && <QuickAddRow type={type} />}
           {isLoading && (
             <TableRow>
               <TableCell colSpan={7} className="space-y-2 py-3">
@@ -388,6 +551,14 @@ export function ProjectsTable({
                       "z-10 shadow-[0_2px_10px_-2px_rgba(0,0,0,0.2)]"
                   )}
                 >
+                  <TableCell className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(project.id)}
+                      onChange={() => toggleSelected(project.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </TableCell>
                   <TableCell className="w-8 pr-0">
                     <span className="flex cursor-grab items-center text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-60 hover:opacity-100">
                       <GripVertical className="size-4" />
@@ -402,9 +573,6 @@ export function ProjectsTable({
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={project.status} />
-                  </TableCell>
-                  <TableCell>
                     <ResultSelectInline
                       projectId={project.id}
                       value={project.result ?? null}
@@ -416,16 +584,18 @@ export function ProjectsTable({
                       value={project.assigneeIds ?? []}
                     />
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <DueDateInline
+                  <TableCell className="max-w-[280px]">
+                    <CommentsInline
                       projectId={project.id}
-                      value={project.dueDate}
+                      value={project.comments}
                     />
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-muted-foreground">
-                    {project.updatedAt
-                      ? format(new Date(project.updatedAt), "MMM d, yyyy")
-                      : "—"}
+                  <TableCell className="w-16 text-right">
+                    <ProjectActionsMenu
+                      projectId={project.id}
+                      projectName={project.name}
+                      onTrashed={(id) => toggleSelected(id)}
+                    />
                   </TableCell>
                 </TableRow>
               );
@@ -433,6 +603,17 @@ export function ProjectsTable({
           <QuickAddRow type={type} />
         </TableBody>
       </Table>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,.json,application/json,text/csv"
+        hidden
+        onChange={(e) => {
+          handleImportFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
     </div>
   );
 }
+

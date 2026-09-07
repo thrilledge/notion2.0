@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { projects, projectAssignees, users } from "@/lib/db/schema";
+import { projects, projectAssignees, users, workspaceMembers } from "@/lib/db/schema";
 import { getAuthz, canManageWorkspace } from "@/lib/authz";
 
 /**
@@ -56,6 +56,11 @@ export async function GET(request: Request) {
           avatarUrl: users.avatarUrl,
         })
         .from(users)
+        .innerJoin(
+          workspaceMembers,
+          eq(workspaceMembers.userId, users.id)
+        )
+        .where(eq(workspaceMembers.workspaceId, workspaceId))
         .orderBy(users.fullName),
     ]);
 
@@ -116,6 +121,25 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Only allow assigning workspace members (project access is defined per
+    // member; assigning outsiders would leak project scope to them).
+    const [targetMember] = await db
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, userId)
+        )
+      )
+      .limit(1);
+    if (!targetMember) {
+      return NextResponse.json(
+        { error: "User is not a member of this workspace" },
+        { status: 400 }
+      );
+    }
+
     // Only allow assigning projects that belong to this workspace.
     const workspaceProjects = await db
       .select({ id: projects.id })

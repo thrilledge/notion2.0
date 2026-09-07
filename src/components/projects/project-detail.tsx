@@ -11,9 +11,9 @@ import {
   Users,
   Loader2,
   Plus,
-  MoreHorizontal,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+
+import { ProjectActionsMenu } from "@/components/projects/project-actions-menu";
 
 
 const STATUS_OPTIONS = [
@@ -158,6 +160,7 @@ export function ProjectDetail({
 }: {
   project: Project;
 }) {
+  const router = useRouter();
   const update = useUpdateProject();
 
   const { data: team = [] } = useTeam();
@@ -342,12 +345,11 @@ export function ProjectDetail({
               </div>
             )}
 
-            <button
-              type="button"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
+            <ProjectActionsMenu
+              projectId={project.id}
+              projectName={project.name}
+              onTrashed={() => router.push("/projects")}
+            />
 
           </div>
         </div>

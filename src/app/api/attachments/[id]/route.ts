@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { eq, inArray } from "drizzle-orm";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { db } from "@/lib/db";
 import { attachments, hostingClients, docs, meetings } from "@/lib/db/schema";
+import { deleteLocalFile } from "@/lib/storage";
+import { r2Client, R2_CONFIG } from "@/lib/r2";
 import {
   getAuthz,
   canEditProject,
@@ -73,6 +76,24 @@ export async function DELETE(
     }
 
     await db.delete(attachments).where(eq(attachments.id, id));
+
+    // Remove the underlying file so no orphaned objects (and no sensitive data)
+    // are left behind once the DB record is gone.
+    if (attachment.storage === "local" && attachment.storageKey) {
+      deleteLocalFile(attachment.storageKey);
+    } else if (attachment.storage === "r2" && attachment.storageKey) {
+      try {
+        await r2Client.send(
+          new DeleteObjectCommand({
+            Bucket: R2_CONFIG.bucketName,
+            Key: attachment.storageKey,
+          })
+        );
+      } catch {
+        // Best effort; the DB row is already gone.
+      }
+    }
+
     return NextResponse.json({ data: { success: true } });
   } catch (error) {
     console.error("Failed to delete attachment:", error);
