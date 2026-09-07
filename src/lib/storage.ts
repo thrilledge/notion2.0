@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { MAX_UPLOAD_BYTES } from "@/lib/security";
 
-export const LOCAL_STORAGE_DIR = path.resolve(
+export const LOCAL_STORAGE_DIR = path.resolve(/*turbopackIgnore: true*/
   process.env.LOCAL_STORAGE_DIR ?? path.join(process.cwd(), "uploads")
 );
 
@@ -11,7 +11,7 @@ export const LOCAL_STORAGE_PUBLIC_BASE =
   process.env.LOCAL_STORAGE_PUBLIC_BASE ?? "/uploads";
 
 function ensureDir(relativeDir: string): string {
-  const target = path.join(LOCAL_STORAGE_DIR, relativeDir);
+  const target = path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_DIR, relativeDir);
   fs.mkdirSync(target, { recursive: true });
   return target;
 }
@@ -67,15 +67,15 @@ export function storeLocalFileFromDisk(
 }
 
 export function localFileAbsolutePath(key: string): string {
-  return path.join(LOCAL_STORAGE_DIR, key);
+  return path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_DIR, key);
 }
 
 /** Delete a previously stored local file. Missing files are a no-op. */
 export function deleteLocalFile(key: string): void {
-  const full = path.resolve(LOCAL_STORAGE_DIR, key);
+  const full = path.resolve(/*turbopackIgnore: true*/ LOCAL_STORAGE_DIR, key);
   if (path.relative(LOCAL_STORAGE_DIR, full).startsWith("..")) return;
   try {
-    if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+    if (fs.existsSync(/*turbopackIgnore: true*/ full) && fs.statSync(/*turbopackIgnore: true*/ full).isFile()) {
       fs.unlinkSync(full);
     }
   } catch {
@@ -91,5 +91,5 @@ export function publicUrlToAbsolutePath(publicUrl: string): string | null {
     ? publicUrl.slice("/uploads/".length)
     : null;
   if (!rel) return null;
-  return path.join(LOCAL_STORAGE_DIR, rel);
+  return path.join(/*turbopackIgnore: true*/ LOCAL_STORAGE_DIR, rel);
 }
