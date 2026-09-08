@@ -213,11 +213,20 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Place new projects at the top of the list: give them a sortOrder above
+    // the current maximum so the DESC sort shows them first.
+    const [maxRow] = await db
+      .select({ maxSort: sql<number>`coalesce(max(${projects.sortOrder}), 0)` })
+      .from(projects)
+      .where(eq(projects.workspaceId, targetWorkspaceId));
+    const nextSort = (maxRow?.maxSort ?? 0) + 20;
+
     const [project] = await db
       .insert(projects)
       .values({
         ...data,
         workspaceId: targetWorkspaceId,
+        sortOrder: nextSort,
         ...(data.assigneeId === undefined && assigneeIds && assigneeIds.length > 0
           ? { assigneeId: assigneeIds[0] }
           : {}),

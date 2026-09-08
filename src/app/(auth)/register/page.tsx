@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,27 @@ import {
 } from "@/components/ui/card";
 
 export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <Card className="border-border bg-card">
+          <CardHeader className="space-y-1 text-center">
+            <CardTitle className="text-2xl font-bold tracking-tight">
+              Create an account
+            </CardTitle>
+          </CardHeader>
+        </Card>
+      }
+    >
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const invite = searchParams.get("invite");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,6 +55,7 @@ export default function RegisterPage() {
       options: {
         data: {
           full_name: name,
+          invite_code: invite ?? null,
         },
       },
     });
@@ -63,8 +84,13 @@ export default function RegisterPage() {
         <CardDescription>
           Join your project management workspace
         </CardDescription>
-      </CardHeader>
-      <CardContent>
+        {invite && (
+          <p className="pt-1 text-xs text-muted-foreground">
+            You were invited to a workspace. Create your account with the invited
+            email address to get access automatically.
+          </p>
+        )}
+      </CardHeader>      <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">

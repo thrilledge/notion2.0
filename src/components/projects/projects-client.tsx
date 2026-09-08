@@ -7,19 +7,11 @@ import { NewProjectDialog } from "@/components/projects/new-project-dialog";
 import { ProjectsTable } from "@/components/projects/projects-table";
 
 export function ProjectsClient({ type }: { type: "client" | "side_project" }) {
-  const {
-    status,
-    result,
-    assigneeId,
-    search,
-    setStatus,
-    setResult,
-    setSearch,
-  } = useProjectFilters();
+  const { result, assigneeId, search, setResult, setSearch } =
+    useProjectFilters();
 
   const { data } = useProjects({
     type,
-    status: status.length ? status[0] : undefined,
     result: result.length ? result[0] : undefined,
     assigneeId: assigneeId ?? undefined,
     search: search || undefined,
@@ -57,23 +49,12 @@ export function ProjectsClient({ type }: { type: "client" | "side_project" }) {
           placeholder="Search projects..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-9 w-64 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="h-9 w-64 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
-        <select
-          value={status[0] ?? ""}
-          onChange={(e) => setStatus(e.target.value ? [e.target.value] : [])}
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none"
-        >
-          <option value="">All statuses</option>
-          <option value="not_started">Not started</option>
-          <option value="in_progress">In progress</option>
-          <option value="done">Done</option>
-          <option value="archived">Archived</option>
-        </select>
         <select
           value={result[0] ?? ""}
           onChange={(e) => setResult(e.target.value ? [e.target.value] : [])}
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none"
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus-visible:outline-none"
         >
           <option value="">All results</option>
           <option value="company_work">Company Work</option>
@@ -86,7 +67,6 @@ export function ProjectsClient({ type }: { type: "client" | "side_project" }) {
 
       <ProjectsTable
         type={type}
-        status={status.length ? status[0] : undefined}
         result={result.length ? result[0] : undefined}
         assigneeId={assigneeId ?? undefined}
         search={search || undefined}

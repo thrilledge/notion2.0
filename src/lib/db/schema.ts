@@ -403,6 +403,31 @@ export const notifications = pgTable(
   ]
 );
 
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, {
+      onDelete: "cascade",
+    }),
+    email: text("email").notNull(),
+    role: text("role", {
+      enum: ["owner", "member"],
+    })
+      .notNull()
+      .default("member"),
+    invitedById: uuid("invited_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    acceptedAt: timestamp("accepted_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("invitations_email_idx").on(t.email),
+    index("invitations_workspace_idx").on(t.workspaceId),
+  ]
+);
+
 export const activityLog = pgTable(
   "activity_log",
   {
@@ -452,3 +477,5 @@ export type WikiPage = typeof wikiPages.$inferSelect;
 export type ActivityLog = typeof activityLog.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
+export type Invitation = typeof invitations.$inferSelect;
+export type NewInvitation = typeof invitations.$inferInsert;

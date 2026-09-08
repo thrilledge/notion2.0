@@ -128,6 +128,65 @@ export function useAddMember(workspaceId: string) {
   });
 }
 
+export function useInviteMember(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ email, role }: { email: string; role: string }) => {
+      const res = await fetch(`/api/workspaces/${workspaceId}/invitations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role }),
+      });
+      return j<{ data: { message?: string } }>(res);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["workspace-members", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["invitations", workspaceId] });
+      // A newly added/invited-existing member becomes assignable immediately.
+      qc.invalidateQueries({ queryKey: ["assignments", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["team"] });
+    },
+  });
+}
+
+export type WorkspaceInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  invitedBy: string | null;
+};
+
+export function useWorkspaceInvitations(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ["invitations", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/invitations`,
+        { cache: "no-store" }
+      );
+      const json = await j<{ data: WorkspaceInvitation[] }>(res);
+      return json.data;
+    },
+  });
+}
+
+export function useRevokeInvitation(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (invitationId: string) => {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/invitations?invitationId=${invitationId}`,
+        { method: "DELETE" }
+      );
+      return j(res);
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["invitations", workspaceId] }),
+  });
+}
+
 export function useSetRole(workspaceId: string) {
   const qc = useQueryClient();
   return useMutation({

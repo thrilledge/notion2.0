@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { UserPlus, Trash2, Loader2 } from "lucide-react";
+import { UserPlus, Trash2, Loader2, Clock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -24,7 +25,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useWorkspaces, useCurrentUser } from "@/hooks/use-admin";
 import {
   useWorkspaceMembers,
-  useAddMember,
+  useInviteMember,
+  useWorkspaceInvitations,
+  useRevokeInvitation,
   useSetRole,
   useRemoveMember,
   type WorkspaceMemberRow,
@@ -53,14 +56,14 @@ export function MembersPanel() {
       }
     >
       <div className="space-y-5">
-        {canManage ? (
+        {canManage && wsId ? (
           <AddMember workspaceId={wsId} />
-        ) : (
+        ) : !canManage && wsId ? (
           <p className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
             You can view this workspace&apos;s members. Only the workspace owner
             can add or remove members.
           </p>
-        )}
+        ) : null}
 
         {isLoading && <Skeleton className="h-40 w-full" />}
         {isError && (
@@ -101,6 +104,7 @@ export function MembersPanel() {
             </Table>
           </div>
         )}
+        {canManage && wsId ? <PendingInvites workspaceId={wsId} /> : null}
       </div>
     </SettingsCard>
   );
@@ -181,61 +185,128 @@ function MemberRow({
   );
 }
 
+function PendingInvites({ workspaceId }: { workspaceId: string }) {
+  const { data, isLoading } = useWorkspaceInvitations(workspaceId);
+  const revoke = useRevokeInvitation(workspaceId);
+  const invites = data ?? [];
+
+  if (isLoading) return null;
+  if (invites.length === 0) return null;
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-muted/30">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <Clock className="size-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Pending invitations</span>
+        <Badge variant="secondary" className="ml-auto">
+          {invites.length}
+        </Badge>
+      </div>
+      <ul className="divide-y">
+        {invites.map((invite) => (
+          <li
+            key={invite.id}
+            className="flex items-center justify-between gap-3 px-3 py-2"
+          >
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-sm font-medium">{invite.email}</div>
+              <div className="text-xs text-muted-foreground">
+                <span className="capitalize">{invite.role}</span>
+                {invite.invitedBy ? ` · by ${invite.invitedBy}` : ""}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => revoke.mutate(invite.id)}
+              disabled={revoke.isPending && revoke.variables === invite.id}
+              title="Revoke invitation"
+              className="shrink-0 text-muted-foreground hover:text-destructive"
+            >
+              {revoke.isPending && revoke.variables === invite.id ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <X className="size-4" />
+              )}
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function AddMember({ workspaceId }: { workspaceId: string }) {
-  const add = useAddMember(workspaceId);
+  const invite = useInviteMember(workspaceId);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row">
-      <Input
-        placeholder="Email address"
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="flex-1"
-      />
-      <Select value={role} onValueChange={setRole}>
-        <SelectTrigger className="w-28">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {ROLES.map((r) => (
-            <SelectItem key={r} value={r} className="capitalize">
-              {r}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button
-        disabled={!email.trim() || add.isPending}
-        onClick={() =>
-          add.mutate(
-            { email: email.trim(), role },
-            {
-              onSuccess: () => {
-                setEmail("");
-                setMsg({ ok: true, text: `${email.trim()} added as ${role}.` });
-              },
-              onError: (e) =>
-                setMsg({ ok: false, text: e.message || "Failed to add member" }),
-            }
-          )
-        }
-      >
-        {add.isPending ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <UserPlus className="size-4" />
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          placeholder="Email address"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="flex-1"
+        />
+        <Select value={role} onValueChange={setRole}>
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ROLES.map((r) => (
+              <SelectItem key={r} value={r} className="capitalize">
+                {r}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          disabled={!email.trim() || invite.isPending || !workspaceId}
+          onClick={() =>
+            invite.mutate(
+              { email: email.trim(), role },
+              {
+                onSuccess: (res) => {
+                  const message =
+                    (res?.data?.message as string) ??
+                    `${email.trim()} added to the workspace.`;
+                  setEmail("");
+                  setMsg({ ok: true, text: message });
+                },
+                onError: (e) =>
+                  setMsg({
+                    ok: false,
+                    text: e.message || "Failed to invite member",
+                  }),
+              }
+            )
+          }
+        >
+          {invite.isPending ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <UserPlus className="size-4" />
+          )}
+          Invite
+        </Button>
+        {msg && (
+          <p
+            className={`py-1 text-sm ${
+              msg.ok ? "text-emerald-600" : "text-destructive"
+            }`}
+          >
+            {msg.text}
+          </p>
         )}
-        Add
-      </Button>
-      {msg && (
-        <p className={`py-1 text-sm ${msg.ok ? "text-emerald-600" : "text-destructive"}`}>
-          {msg.text}
-        </p>
-      )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        New users receive an email and are automatically added to this
+        workspace once they create an account.
+      </p>
     </div>
   );
 }

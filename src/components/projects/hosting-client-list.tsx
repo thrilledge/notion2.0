@@ -214,7 +214,7 @@ function QuickAddHostingRow() {
   };
 
   const inputCls =
-    "w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+    "w-full rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
   return (
     <TableRow className="bg-muted/30">
