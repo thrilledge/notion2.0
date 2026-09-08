@@ -20,6 +20,7 @@ import {
   useReorderProject,
   useProjects,
   useImportProjects,
+  useProjectAction,
   type ProjectWithAssignees,
 } from "@/hooks/use-projects";
 import {
@@ -32,6 +33,14 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -200,7 +209,7 @@ function QuickAddRow({ type }: { type: "client" | "side_project" }) {
   };
 
   const inputCls =
-    "w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+    "w-full rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
   return (
     <TableRow className="bg-muted/30">
@@ -327,6 +336,38 @@ export function ProjectsTable({
       const next = new Set<string>();
       if (!allSelected) allIds.forEach((id) => next.add(id));
       return next;
+    });
+  };
+
+  const trashAction = useProjectAction();
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashing, setTrashing] = useState(false);
+
+  const handleBulkTrash = () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setTrashing(true);
+    ids.forEach((id, i) => {
+      trashAction.mutate(
+        { id, action: "trash" },
+        {
+          onSuccess: () => {
+            if (i === ids.length - 1) {
+              setTrashing(false);
+              setSelected(new Set());
+              setTrashOpen(false);
+              toast.success(`Moved ${ids.length} project(s) to trash`);
+            }
+          },
+          onError: (e) => {
+            if (i === ids.length - 1) {
+              setTrashing(false);
+              setTrashOpen(false);
+            }
+            toast.error(e instanceof Error ? e.message : "Failed to trash project");
+          },
+        }
+      );
     });
   };
 
@@ -470,13 +511,50 @@ export function ProjectsTable({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setTrashOpen(true)}
+              disabled={trashing}
+            >
+              {trashing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
+              Trash
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
-              <Trash2 className="size-4" />
+              <X className="size-4" />
               Clear
             </Button>
           </div>
         </div>
       )}
+      <Dialog open={trashOpen} onOpenChange={setTrashOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Move to trash</DialogTitle>
+            <DialogDescription>
+              Move {selected.size} selected project(s) to trash? You can restore
+              them later from the trash.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setTrashOpen(false)} disabled={trashing}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBulkTrash} disabled={trashing}>
+              {trashing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
+              Trash
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Table>
         <TableHeader>
           <TableRow>

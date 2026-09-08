@@ -8,6 +8,8 @@ import {
   Trash2,
   Loader2,
   Building2,
+  Clock,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,13 +41,16 @@ import {
 import {
   useWorkspaces,
   useWorkspaceMembers,
-  useAddMember,
+  useInviteMember,
+  useWorkspaceInvitations,
+  useRevokeInvitation,
   useSetRole,
   useRemoveMember,
   useCreateWorkspace,
   useAssignments,
   useSetAssignments,
   type WorkspaceMemberRow,
+  type WorkspaceInvitation,
 } from "@/hooks/use-admin";
 
 function initials(name: string | null) {
@@ -164,7 +169,7 @@ function MembersPanel({ workspaceId }: { workspaceId: string }) {
           </div>
         )}
         {!isLoading && !isError && (
-          <div className="rounded-md border">
+          <div className="overflow-hidden rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -191,8 +196,80 @@ function MembersPanel({ workspaceId }: { workspaceId: string }) {
             </Table>
           </div>
         )}
+        <PendingInvites workspaceId={workspaceId} />
       </CardContent>
     </Card>
+  );
+}
+
+function PendingInvites({ workspaceId }: { workspaceId: string }) {
+  const { data, isLoading } = useWorkspaceInvitations(workspaceId);
+  const revoke = useRevokeInvitation(workspaceId);
+  const invites = data ?? [];
+
+  if (isLoading) return null;
+  if (invites.length === 0) return null;
+
+  return (
+    <div className="rounded-md border bg-muted/30">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <Clock className="size-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Pending invitations</span>
+        <Badge variant="secondary" className="ml-auto">
+          {invites.length}
+        </Badge>
+      </div>
+      <ul className="divide-y">
+        {invites.map((invite) => (
+          <PendingInviteRow
+            key={invite.id}
+            invite={invite}
+            revokingId={revoke.isPending ? revoke.variables : null}
+            onRevoke={() => revoke.mutate(invite.id)}
+          />
+        ))}
+      </ul>
+      <p className="px-3 py-2 text-xs text-muted-foreground">
+        Invited people are added as members automatically once they create an
+        account. They become assignable at that point.
+      </p>
+    </div>
+  );
+}
+
+function PendingInviteRow({
+  invite,
+  revokingId,
+  onRevoke,
+}: {
+  invite: WorkspaceInvitation;
+  revokingId: string | null;
+  onRevoke: () => void;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-3 px-3 py-2">
+      <div className="min-w-0 leading-tight">
+        <div className="truncate text-sm font-medium">{invite.email}</div>
+        <div className="text-xs text-muted-foreground">
+          <span className="capitalize">{invite.role}</span>
+          {invite.invitedBy ? ` · by ${invite.invitedBy}` : ""}
+        </div>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onRevoke}
+        disabled={revokingId === invite.id}
+        title="Revoke invitation"
+        className="shrink-0 text-muted-foreground hover:text-destructive"
+      >
+        {revokingId === invite.id ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <X className="size-4" />
+        )}
+      </Button>
+    </li>
   );
 }
 
@@ -266,60 +343,75 @@ function MemberRow({
 }
 
 function AddMember({ workspaceId }: { workspaceId: string }) {
-  const add = useAddMember(workspaceId);
+  const invite = useInviteMember(workspaceId);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row">
-      <Input
-        placeholder="User email"
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="flex-1"
-      />
-      <Select value={role} onValueChange={setRole}>
-        <SelectTrigger className="w-28">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {["owner", "member"].map((r) => (
-            <SelectItem key={r} value={r} className="capitalize">
-              {r}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button
-        disabled={!email.trim() || add.isPending}
-        onClick={() => {
-          add.mutate(
-            { email: email.trim(), role },
-            {
-              onSuccess: () => {
-                setEmail("");
-                setMsg({ ok: true, text: "Added." });
-              },
-              onError: (e) =>
-                setMsg({ ok: false, text: e.message || "Failed to add" }),
-            }
-          );
-        }}
-      >
-        {add.isPending ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <UserPlus className="size-4" />
-        )}
-        Add
-      </Button>
+    <div className="space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          placeholder="person@example.com"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="flex-1"
+        />
+        <Select value={role} onValueChange={setRole}>
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {["owner", "member"].map((r) => (
+              <SelectItem key={r} value={r} className="capitalize">
+                {r}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          disabled={!email.trim() || invite.isPending || !workspaceId}
+          onClick={() => {
+            invite.mutate(
+              { email: email.trim(), role },
+              {
+                onSuccess: (res) => {
+                  const message =
+                    (res?.data?.message as string) ??
+                    `${email.trim()} added to the workspace.`;
+                  setEmail("");
+                  setMsg({ ok: true, text: message });
+                },
+                onError: (e) =>
+                  setMsg({ ok: false, text: e.message || "Failed to invite" }),
+              }
+            );
+          }}
+        >
+          {invite.isPending ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <UserPlus className="size-4" />
+          )}
+          Invite
+        </Button>
+      </div>
       {msg && (
-        <p className={`text-sm ${msg.ok ? "text-green-600" : "text-destructive"}`}>
+        <p
+          className={`rounded-md px-3 py-2 text-sm ${
+            msg.ok
+              ? "bg-green-500/10 text-green-700 dark:text-green-400"
+              : "bg-destructive/10 text-destructive"
+          }`}
+        >
           {msg.text}
         </p>
       )}
+      <p className="text-xs text-muted-foreground">
+        Existing users are added instantly. New users are sent an invite and
+        automatically join when they create an account.
+      </p>
     </div>
   );
 }

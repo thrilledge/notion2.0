@@ -2,14 +2,16 @@ import { db } from "@/lib/db";
 import {
   docs,
   hostingClients,
+  invitations,
   meetings,
+  notifications,
   projects,
   users,
   wikiPages,
   workspaceMembers,
   workspaces,
 } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 interface AuthUserLike {
   id: string;
@@ -124,6 +126,82 @@ export async function ensureWorkspaceBootstrap() {
 }
 
 /**
+ * Claim any pending workspace invitations whose email matches the given user.
+ * On the user's first sign-in after creating an account (or any later sign-in
+ * if invitations were sent subsequently), they are automatically added to the
+ * workspaces they were invited to as members.
+ *
+ * Idempotent: repeated claims are no-ops thanks to the membership PK.
+ */
+async function claimInvitationsForUser(userId: string, email: string): Promise<void> {
+  try {
+    const pending = await db
+      .select({ id: invitations.id, workspaceId: invitations.workspaceId, role: invitations.role })
+      .from(invitations)
+      .where(and(eq(invitations.email, email), isNull(invitations.acceptedAt)));
+
+    if (pending.length === 0) return;
+
+    const workspaceIds = pending
+      .map((p) => p.workspaceId)
+      .filter((w): w is string => !!w);
+
+    if (workspaceIds.length === 0) {
+      // Workspace was deleted; just mark these invitations processed.
+      await db
+        .update(invitations)
+        .set({ acceptedAt: new Date() })
+        .where(
+          and(
+            inArray(invitations.id, pending.map((p) => p.id)),
+            eq(invitations.email, email)
+          )
+        );
+      return;
+    }
+
+    await db
+      .insert(workspaceMembers)
+      .values(
+        pending.map((p) => ({
+          workspaceId: p.workspaceId!,
+          userId,
+          role: p.role,
+        }))
+      )
+      .onConflictDoNothing();
+
+    // Notify the new member about each workspace they joined.
+    const wsRows = await db
+      .select({ id: workspaces.id, name: workspaces.name })
+      .from(workspaces)
+      .where(inArray(workspaces.id, workspaceIds));
+
+    for (const ws of wsRows) {
+      await db.insert(notifications).values({
+        userId,
+        type: "system",
+        title: `Joined ${ws.name}`,
+        body: `You now have access to the ${ws.name} workspace`,
+        link: "/projects",
+      });
+    }
+
+    await db
+      .update(invitations)
+      .set({ acceptedAt: new Date() })
+      .where(
+        and(
+          inArray(invitations.id, pending.map((p) => p.id)),
+          eq(invitations.email, email)
+        )
+      );
+  } catch (e) {
+    console.error("claimInvitationsForUser failed:", e);
+  }
+}
+
+/**
  * Ensure the authenticated Supabase auth user has a matching row in our
  * `users` table keyed by the auth user id. This is required so that FKs
  * like `projects.created_by_id` and `assignee_id` resolve correctly.
@@ -185,6 +263,9 @@ export async function syncUser(authUser: AuthUserLike) {
   } catch (e) {
     console.error("Workspace bootstrap failed:", e);
   }
+
+  // Auto-enroll the user into any workspace they've been invited to by email.
+  await claimInvitationsForUser(userId, email);
 
   return (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0] ?? null;
 }
