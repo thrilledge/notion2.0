@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { projects, projectAssignees, users, workspaceMembers } from "@/lib/db/schema";
+import { projects, projectAssignees, users, workspaceMembers, workspaces } from "@/lib/db/schema";
 import { getAuthz, canManageWorkspace } from "@/lib/authz";
+import { notifyProjectAssignees } from "@/lib/assignment-mail";
 
 /**
  * Assignment management for a workspace. Only workspace managers may use this.
@@ -174,6 +175,28 @@ export async function POST(request: Request) {
     if (toAdd.length > 0) {
       await db.insert(projectAssignees).values(
         toAdd.map((projectId) => ({ projectId, userId }))
+      );
+
+      // Notify the newly-assigned user by email (no-op when SMTP unconfigured).
+      const addedProjects =
+        toAdd.length > 0
+          ? await db
+              .select({ id: projects.id, name: projects.name })
+              .from(projects)
+              .where(inArray(projects.id, toAdd))
+          : [];
+      const [workspaceRow] = await db
+        .select({ name: workspaces.name })
+        .from(workspaces)
+        .where(eq(workspaces.id, workspaceId));
+      await Promise.all(
+        addedProjects.map((p) =>
+          notifyProjectAssignees([userId], {
+            projectId: p.id,
+            projectName: p.name,
+            workspaceName: workspaceRow?.name ?? "Workspace",
+          })
+        )
       );
     }
     if (toRemove.length > 0) {

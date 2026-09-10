@@ -93,3 +93,52 @@ function escapeHtml(s: string): string {
 export function buildInviteUrl(invitationId: string): string {
   return `${appUrl}/register?invite=${invitationId}`;
 }
+
+export interface AssignmentEmailParams {
+  to: string;
+  userName?: string | null;
+  projectName: string;
+  workspaceName: string;
+  projectUrl: string;
+}
+
+export async function sendAssignmentEmail(
+  params: AssignmentEmailParams
+): Promise<{ sent: boolean; reason?: string }> {
+  const t = getTransporter();
+  if (!t) {
+    return {
+      sent: false,
+      reason: "SMTP is not configured (set SMTP_HOST/SMTP_USER/SMTP_PASS).",
+    };
+  }
+
+  const name = params.userName || "there";
+  const html = `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;">
+    <h2 style="margin:0 0 8px;">You've been assigned to <strong>${escapeHtml(params.projectName)}</strong></h2>
+    <p style="color:#4b5563;line-height:1.6;">Hi ${escapeHtml(name)}, you were just assigned to <strong>${escapeHtml(params.projectName)}</strong> in the <strong>${escapeHtml(params.workspaceName)}</strong> workspace.</p>
+    <p style="margin:20px 0;">
+      <a href="${params.projectUrl}" style="background:#111827;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;display:inline-block;">Open project</a>
+    </p>
+    <p style="color:#9ca3af;font-size:12px;">If the button doesn't work, copy and paste this link into your browser:<br/>${params.projectUrl}</p>
+  </div>`;
+
+  try {
+    await t.sendMail({
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+      to: params.to,
+      subject: `You've been assigned to ${params.projectName}`,
+      text: `Hi ${name}, you were just assigned to ${params.projectName} in the ${params.workspaceName} workspace. Open ${params.projectUrl} to view it.`,
+      html,
+    });
+    return { sent: true };
+  } catch (error) {
+    console.error("Failed to send assignment email:", error);
+    return { sent: false, reason: (error as Error).message };
+  }
+}
+
+export function buildProjectUrl(projectId: string): string {
+  return `${appUrl}/projects/${projectId}`;
+}

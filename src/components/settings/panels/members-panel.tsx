@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -25,6 +26,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useWorkspaces, useCurrentUser } from "@/hooks/use-admin";
 import {
   useWorkspaceMembers,
+  usePresenceHeartbeat,
   useInviteMember,
   useWorkspaceInvitations,
   useRevokeInvitation,
@@ -40,7 +42,12 @@ export function MembersPanel() {
   const { data: me } = useCurrentUser();
   const [workspaceId, setWorkspaceId] = useState("");
   const wsId = workspaceId || workspaces?.[0]?.id || "";
-  const { data, isLoading, isError } = useWorkspaceMembers(wsId || null);
+  const isValidWs = !!wsId;
+  usePresenceHeartbeat(isValidWs ? wsId : null);
+  const { data, isLoading, isError } = useWorkspaceMembers(
+    isValidWs ? wsId : null,
+    { refetchInterval: 30_000 }
+  );
   const members = data ?? [];
   const canManage = canManageWorkspace(me, wsId);
 
@@ -127,15 +134,34 @@ function MemberRow({
     <TableRow>
       <TableCell>
         <div className="flex items-center gap-3">
-          <Avatar className="size-8 rounded-lg">
-            <AvatarImage src={member.avatarUrl ?? ""} alt="" />
-            <AvatarFallback className="rounded-lg">
-              {initials(member.fullName)}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative">
+            <Avatar className="size-8 rounded-lg">
+              <AvatarImage src={member.avatarUrl ?? ""} alt="" />
+              <AvatarFallback className="rounded-lg">
+                {initials(member.fullName)}
+              </AvatarFallback>
+            </Avatar>
+            <span
+              title={member.isOnline ? "Online" : "Offline"}
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background",
+                member.isOnline ? "bg-emerald-500" : "bg-muted-foreground/40"
+              )}
+            />
+          </div>
           <div className="leading-tight">
             <div className="font-medium">
               {member.fullName ?? "Unknown"}
+              <span
+                className={cn(
+                  "ml-2 text-xs font-normal",
+                  member.isOnline
+                    ? "text-emerald-600"
+                    : "text-muted-foreground"
+                )}
+              >
+                {member.isOnline ? "online" : "offline"}
+              </span>
             </div>
             <div className="text-xs text-muted-foreground">{member.email}</div>
           </div>

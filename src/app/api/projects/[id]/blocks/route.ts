@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -31,7 +31,72 @@ const updateSchema = z.object({
   text: z.string().max(20000).optional(),
   spans: z.array(spanSchema).optional(),
   checked: z.boolean().optional(),
+  type: z
+    .enum(["paragraph", "heading_1", "heading_2", "heading_3", "to_do", "bulleted_list", "numbered_list", "quote"])
+    .optional(),
 });
+
+const deleteSchema = z.object({
+  blockIds: z.array(z.string().uuid()).min(1).max(100),
+});
+
+export async function DELETE(request: Request, ctx: RouteContext) {
+  const authz = await getAuthz();
+  if (!authz) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await ctx.params;
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = deleteSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request body", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  try {
+    if (!(await canEditProject(authz, id))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Only delete blocks that live on a page belonging to THIS project.
+    const blocks = await db
+      .select({ id: pageBlocks.id })
+      .from(pageBlocks)
+      .innerJoin(pages, eq(pages.id, pageBlocks.pageId))
+      .where(
+        and(
+          eq(pages.parentId, id),
+          eq(pages.parentType, "project"),
+          inArray(pageBlocks.id, parsed.data.blockIds)
+        )
+      );
+
+    if (blocks.length > 0) {
+      await db.delete(pageBlocks).where(
+        inArray(
+          pageBlocks.id,
+          blocks.map((b) => b.id)
+        )
+      );
+    }
+
+    return NextResponse.json({ data: { success: true } });
+  } catch (error) {
+    console.error("Failed to delete blocks:", error);
+    return NextResponse.json(
+      { error: "Failed to delete blocks" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(request: Request, ctx: RouteContext) {
   const authz = await getAuthz();
@@ -212,9 +277,15 @@ export async function PATCH(request: Request, ctx: RouteContext) {
     if (parsed.data.checked !== undefined) {
       nextContent.checked = parsed.data.checked;
     }
+    const nextType = parsed.data.type ?? block[0].type;
+    if (nextType.startsWith("heading_")) {
+      nextContent.level = Number(nextType.slice(-1));
+    } else if (!nextType.startsWith("heading_")) {
+      delete nextContent.level;
+    }
     const updated = await db
       .update(pageBlocks)
-      .set({ content: nextContent })
+      .set({ content: nextContent, ...(nextType !== block[0].type ? { type: nextType } : {}) })
       .where(eq(pageBlocks.id, block[0].id))
       .returning();
 

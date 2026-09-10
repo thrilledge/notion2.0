@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export type WorkspaceRow = {
@@ -17,6 +18,9 @@ export type WorkspaceMemberRow = {
   fullName: string | null;
   avatarUrl: string | null;
   status: string | null;
+  joinedAt?: string;
+  lastSeenAt?: string | null;
+  isOnline?: boolean;
 };
 
 export type AssignmentProject = {
@@ -98,10 +102,16 @@ export function useWorkspaces() {
   });
 }
 
-export function useWorkspaceMembers(workspaceId: string | null) {
+export function useWorkspaceMembers(
+  workspaceId: string | null,
+  options?: { refetchInterval?: number }
+) {
   return useQuery({
     queryKey: ["workspace-members", workspaceId],
     enabled: !!workspaceId,
+    ...(options?.refetchInterval
+      ? { refetchInterval: options.refetchInterval }
+      : {}),
     queryFn: async () => {
       const res = await fetch(`/api/workspaces/${workspaceId}/members`, {
         cache: "no-store",
@@ -110,6 +120,30 @@ export function useWorkspaceMembers(workspaceId: string | null) {
       return json.data;
     },
   });
+}
+
+export function usePresenceHeartbeat(workspaceId: string | null, intervalMs = 30_000) {
+  const qc = useQueryClient();
+  return useEffect(() => {
+    if (!workspaceId) return;
+
+    const beat = async () => {
+      try {
+        await fetch(`/api/workspaces/${workspaceId}/presence`, {
+          method: "POST",
+          cache: "no-store",
+        });
+        qc.invalidateQueries({ queryKey: ["workspace-members", workspaceId] });
+      } catch {
+        // Presence is best-effort; ignore failures.
+      }
+    };
+
+    beat();
+    const timer = setInterval(beat, intervalMs);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
 }
 
 export function useAddMember(workspaceId: string) {

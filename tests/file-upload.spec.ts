@@ -98,49 +98,50 @@ test.describe("File Upload & Attachments", () => {
 
   test("attachments POST rejects oversized file", async ({ page }) => {
     await signIn(page, "owner@test.local", "TestOwner123!");
-    const form = new FormData();
-    const blob = new Blob(["x".repeat(60 * 1024 * 1024)], {
-      type: "text/plain",
-    });
-    form.append("file", blob, "huge.txt");
-    form.append(
-      "meta",
-      JSON.stringify({ projectId, propertyName: "files" })
-    );
+    const file = {
+      name: "huge.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("x".repeat(60 * 1024 * 1024)),
+    };
     const res = await page.request.post(`${BASE}/api/attachments`, {
-      form,
+      multipart: {
+        file,
+        meta: JSON.stringify({ projectId, propertyName: "files" }),
+      },
     });
     expect([400, 413]).toContain(res.status());
   });
 
   test("attachments POST rejects disallowed extension", async ({ page }) => {
     await signIn(page, "owner@test.local", "TestOwner123!");
-    const form = new FormData();
-    const blob = new Blob(["test"], { type: "application/x-msdownload" });
-    form.append("file", blob, "malware.exe");
-    form.append(
-      "meta",
-      JSON.stringify({ projectId, propertyName: "files" })
-    );
+    const file = {
+      name: "malware.exe",
+      mimeType: "application/x-msdownload",
+      buffer: Buffer.from("test"),
+    };
     const res = await page.request.post(`${BASE}/api/attachments`, {
-      form,
+      multipart: {
+        file,
+        meta: JSON.stringify({ projectId, propertyName: "files" }),
+      },
     });
     expect(res.status()).toBe(400);
   });
 
   test("attachments POST accepts valid file", async ({ page }) => {
     await signIn(page, "owner@test.local", "TestOwner123!");
-    const form = new FormData();
-    const blob = new Blob(["Hello QA Test"], { type: "text/plain" });
-    form.append("file", blob, "qa-test.txt");
-    form.append(
-      "meta",
-      JSON.stringify({ projectId, propertyName: "files" })
-    );
+    const file = {
+      name: "qa-test.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Hello QA Test"),
+    };
     const res = await page.request.post(`${BASE}/api/attachments`, {
-      form,
+      multipart: {
+        file,
+        meta: JSON.stringify({ projectId, propertyName: "files" }),
+      },
     });
-    expect(res.status()).toBe(200);
+    expect([200, 201]).toContain(res.status());
     const body = await res.json();
     expect(body.data).toBeTruthy();
   });

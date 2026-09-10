@@ -15,11 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface SettingsSidebarProps {
-  isManager?: boolean;
-}
-
-export function SettingsSidebar({ isManager = true }: SettingsSidebarProps) {
+export function SettingsSidebar() {
   const pathname = usePathname();
   const active = pathname.split("/")[2] ?? "profile";
 
@@ -65,34 +61,30 @@ export function SettingsSidebar({ isManager = true }: SettingsSidebarProps) {
         })}
       </ul>
 
-      {isManager && (
-        <>
-          <p className="mb-3 mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Workspace
-          </p>
-          <ul className="space-y-0.5">
-            {workspaceSections.map((section) => {
-              const isActive = active === section.slug;
-              return (
-                <li key={section.slug}>
-                  <Link
-                    href={`/settings/${section.slug}`}
-                    className={cn(
-                      "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
-                      isActive
-                        ? "bg-accent font-medium text-accent-foreground"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                    )}
-                  >
-                    <section.icon className="size-4 shrink-0" />
-                    <span className="truncate">{section.label}</span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
+      <p className="mb-3 mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Workspace
+      </p>
+      <ul className="space-y-0.5">
+        {workspaceSections.map((section) => {
+          const isActive = active === section.slug;
+          return (
+            <li key={section.slug}>
+              <Link
+                href={`/settings/${section.slug}`}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+                  isActive
+                    ? "bg-accent font-medium text-accent-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                )}
+              >
+                <section.icon className="size-4 shrink-0" />
+                <span className="truncate">{section.label}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </nav>
   );
 }

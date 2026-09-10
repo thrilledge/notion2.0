@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { projectAssignees, projects } from "@/lib/db/schema";
+import { projectAssignees, projects, workspaces } from "@/lib/db/schema";
 import { getAuthz, getAccessibleProjectIds, canCreateProject } from "@/lib/authz";
+import { notifyProjectAssignees } from "@/lib/assignment-mail";
 
 const querySchema = z.object({
   type: z.enum(["client", "side_project"]).optional(),
@@ -110,24 +111,39 @@ export async function GET(request: Request) {
 
     let data = rows;
     if (rows.length > 0) {
-      const pairs = await db
-        .select({
-          projectId: projectAssignees.projectId,
-          userId: projectAssignees.userId,
-        })
-        .from(projectAssignees)
-        .where(inArray(projectAssignees.projectId, rows.map((r) => r.id)));
+      const wsIds = [
+        ...new Set(rows.map((r) => r.workspaceId).filter((id): id is string => !!id)),
+      ];
+
+      const [pairsResult, wsRows] = await Promise.all([
+        db
+          .select({
+            projectId: projectAssignees.projectId,
+            userId: projectAssignees.userId,
+          })
+          .from(projectAssignees)
+          .where(inArray(projectAssignees.projectId, rows.map((r) => r.id))),
+        wsIds.length
+          ? db
+              .select({ id: workspaces.id, name: workspaces.name })
+              .from(workspaces)
+              .where(inArray(workspaces.id, wsIds))
+          : Promise.resolve([] as { id: string; name: string }[]),
+      ]);
 
       const byProject = new Map<string, string[]>();
-      for (const p of pairs) {
+      for (const p of pairsResult) {
         const list = byProject.get(p.projectId) ?? [];
         list.push(p.userId);
         byProject.set(p.projectId, list);
       }
 
+      const nameById = new Map(wsRows.map((w) => [w.id, w.name]));
+
       data = rows.map((r) => ({
         ...r,
         assigneeIds: byProject.get(r.id) ?? [],
+        workspaceName: r.workspaceId ? (nameById.get(r.workspaceId) ?? null) : null,
       }));
     }
 
@@ -239,6 +255,20 @@ export async function POST(request: Request) {
       await db.insert(projectAssignees).values(
         assigneeIds.map((userId) => ({ projectId: project.id, userId }))
       );
+    }
+
+    // Notify newly-assigned users by email (no-op when SMTP unconfigured).
+    const newAssigneeIds = assigneeIds ?? (data.assigneeId ? [data.assigneeId] : []);
+    if (newAssigneeIds.length > 0) {
+      const [workspaceRow] = await db
+        .select({ name: workspaces.name })
+        .from(workspaces)
+        .where(eq(workspaces.id, targetWorkspaceId));
+      await notifyProjectAssignees(newAssigneeIds, {
+        projectId: project.id,
+        projectName: project.name,
+        workspaceName: workspaceRow?.name ?? "Workspace",
+      });
     }
 
     return NextResponse.json({ data: project }, { status: 201 });

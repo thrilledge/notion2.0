@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { projectAssignees, projects, notifications } from "@/lib/db/schema";
-import { getAuthz, canViewProject, canEditProject, canManageWorkspace, roleInWorkspace } from "@/lib/authz";
+import { projectAssignees, projects, notifications, workspaces } from "@/lib/db/schema";
+import { getAuthz, canViewProject, canEditProject, roleInWorkspace } from "@/lib/authz";
+import { notifyProjectAssignees } from "@/lib/assignment-mail";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
@@ -38,6 +39,11 @@ export async function GET(request: Request, ctx: RouteContext) {
   }
 
   const { id } = await ctx.params;
+
+  const parsedId = z.string().uuid().safeParse(id);
+  if (!parsedId.success) {
+    return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  }
 
   try {
     if (!(await canViewProject(authz, id))) {
@@ -77,6 +83,11 @@ export async function PATCH(request: Request, ctx: RouteContext) {
   }
 
   const { id } = await ctx.params;
+
+  const parsedId = z.string().uuid().safeParse(id);
+  if (!parsedId.success) {
+    return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  }
 
   if (!(await canViewProject(authz, id))) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -140,15 +151,32 @@ export async function PATCH(request: Request, ctx: RouteContext) {
         dueDate: dueDate ? new Date(dueDate) : null,
       }),
       ...(assigneeIds !== undefined && {
-        assigneeId: assigneeIds.length > 0 ? assigneeIds[0] : undefined,
+        // Keep the single-assignee column in sync: clear it when the list is empty.
+        assigneeId: assigneeIds.length > 0 ? assigneeIds[0] : null,
       }),
     };
 
-    const [updated] = await db
-      .update(projects)
-      .set(values)
-      .where(eq(projects.id, id))
-      .returning();
+    // Drop undefined keys so an update with no concrete fields doesn't throw
+    // "No values to set".
+    const setValues = Object.fromEntries(
+      Object.entries(values).filter(([, v]) => v !== undefined)
+    );
+
+    let updated: typeof project & { name: string };
+    if (Object.keys(setValues).length === 0) {
+      const [current] = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, id))
+        .limit(1);
+      updated = (current ?? project) as typeof updated;
+    } else {
+      [updated] = await db
+        .update(projects)
+        .set(setValues)
+        .where(eq(projects.id, id))
+        .returning();
+    }
 
     if (assigneeIds !== undefined) {
       await db
@@ -183,6 +211,19 @@ export async function PATCH(request: Request, ctx: RouteContext) {
             projectId: id,
           }))
         );
+      }
+
+      // Emails go to newly-assigned users (no-op when SMTP unconfigured).
+      if (newlyAssigned.length > 0 && project?.workspaceId) {
+        const [workspaceRow] = await db
+          .select({ name: workspaces.name })
+          .from(workspaces)
+          .where(eq(workspaces.id, project.workspaceId));
+        await notifyProjectAssignees(newlyAssigned, {
+          projectId: id,
+          projectName: updated.name,
+          workspaceName: workspaceRow?.name ?? "Workspace",
+        });
       }
     }
 
@@ -226,6 +267,11 @@ export async function DELETE(request: Request, ctx: RouteContext) {
 
   const { id } = await ctx.params;
 
+  const parsedId = z.string().uuid().safeParse(id);
+  if (!parsedId.success) {
+    return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  }
+
   try {
     if (!(await canViewProject(authz, id))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -240,11 +286,9 @@ export async function DELETE(request: Request, ctx: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Only owner/workspace-admin can delete projects.
-    const manager =
-      authz.isGlobalOwner ||
-      (project.workspaceId ? canManageWorkspace(authz, project.workspaceId) : false);
-    if (!manager) {
+    // Any member who can create/edit projects in this workspace may also
+    // delete them (matches the create permission set).
+    if (!(await canEditProject(authz, id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

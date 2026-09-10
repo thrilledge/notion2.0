@@ -30,9 +30,9 @@ test.describe("End-to-End Workflows", () => {
     // View detail
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(3000);
-    const titleVisible = (await page.getByText(project.name).count()) > 0;
-    expect(titleVisible).toBeTruthy();
+    await expect(page.getByRole("textbox", { name: "Untitled" })).toHaveValue(project.name, {
+      timeout: 15000,
+    });
 
     // Update project
     const updateRes = await page.request.patch(`${BASE}/api/projects/${projectId}`, {

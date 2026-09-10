@@ -23,7 +23,7 @@ import { useUpdateProject, useProject } from "@/hooks/use-projects";
 import { useTeam } from "@/hooks/use-team";
 import { useProjectContent } from "@/hooks/use-project-content";
 
-import { EditableBlocks } from "@/components/projects/editable-blocks";
+import { RichTextEditor } from "@/components/projects/rich-text-editor";
 
 import {
   useAttachments,
@@ -797,15 +797,10 @@ export function ProjectDetail({
                           </div>
                         )}
 
-                        <EditableBlocks
-                          projectId={
-                            project.id
-                          }
-                          content={{
-                            pages: [page],
-                            blocks:
-                              pageBlocks,
-                          }}
+                        <RichTextEditor
+                          key={`${project.id}-${page.id}`}
+                          projectId={project.id}
+                          blocks={pageBlocks}
                         />
 
                       </div>

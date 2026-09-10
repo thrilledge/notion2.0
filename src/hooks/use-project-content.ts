@@ -97,20 +97,45 @@ export function useUpdateBlock(projectId: string | undefined) {
       text,
       checked,
       spans,
+      type,
     }: {
       blockId: string;
       text?: string;
       checked?: boolean;
       spans?: ProjectContentBlock["content"]["spans"];
+      type?: string;
     }) => {
       const res = await fetch(`/api/projects/${projectId}/blocks`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blockId, text, checked, spans }),
+        body: JSON.stringify({ blockId, text, checked, spans, type }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         throw new Error(json.error ?? "Failed to update block");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["projects", projectId, "content"],
+      });
+    },
+  });
+}
+
+export function useDeleteBlock(projectId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (blockId: string) => {
+      const res = await fetch(`/api/projects/${projectId}/blocks`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blockIds: [blockId] }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "Failed to delete block");
       }
       return res.json();
     },
