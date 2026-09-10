@@ -6,13 +6,7 @@ import { SettingsSidebar } from "@/components/settings/settings-sidebar";
  * Rendered from each /settings/[section] page (not a route layout) to avoid
  * Next.js layout/route-group typing conflicts.
  */
-export function SettingsShell({
-  children,
-  isManager,
-}: {
-  children: React.ReactNode;
-  isManager?: boolean;
-}) {
+export function SettingsShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto w-full max-w-6xl">
       <div className="flex flex-col gap-6 md:flex-row">
@@ -21,7 +15,7 @@ export function SettingsShell({
             <div className="mb-5">
               <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
             </div>
-            <SettingsSidebar isManager={isManager} />
+            <SettingsSidebar />
           </div>
         </aside>
         <Separator orientation="vertical" className="hidden md:block" />

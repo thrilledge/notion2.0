@@ -12,6 +12,7 @@ test.describe("Projects CRUD", () => {
       await page.goto("/projects");
       await page.waitForLoadState("networkidle");
       await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+      await expect(page.getByText("Thrill Edge Technologies")).toBeVisible();
     });
 
     test("new project dialog opens", async ({ page }) => {
@@ -27,9 +28,14 @@ test.describe("Projects CRUD", () => {
 
     test("creates project via API", async ({ page }) => {
       await signIn(page, "owner@test.local", "TestOwner123!");
+      const wsRes = await page.request.get(`${BASE}/api/workspaces`);
+      expect(wsRes.status()).toBe(200);
+      const wsBody = await wsRes.json();
+      const workspaceId = wsBody.data[0].id;
       const res = await page.request.post(`${BASE}/api/projects`, {
         data: {
           name: projectName,
+          workspaceId,
           type: "client",
           status: "not_started",
           summary: "QA test project for automated testing",

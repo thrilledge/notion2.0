@@ -7,7 +7,6 @@ import {
   getAuthz,
   canViewProject,
   canEditProject,
-  canManageWorkspace,
 } from "@/lib/authz";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -56,12 +55,9 @@ export async function POST(request: Request, ctx: RouteContext) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Trash & restore require owner/admin; duplicate requires edit.
-  if (action === "duplicate") {
-    if (!(await canEditProject(authz, id))) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  } else if (!canManageWorkspace(authz, project.workspaceId ?? "")) {
+  // Trash & restore are allowed for any member who can edit the project —
+  // anyone who can create a project in the workspace can also delete one.
+  if (!(await canEditProject(authz, id))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

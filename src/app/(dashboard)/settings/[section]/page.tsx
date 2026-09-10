@@ -50,15 +50,6 @@ const sections: Record<string, { title: string; description: string }> = {
   },
 };
 
-/** Workspace-admin sections: hidden from plain members (Notion-style). */
-const WORKSPACE_SECTIONS = new Set([
-  "general",
-  "members",
-  "access",
-  "workspaces",
-  "projects",
-]);
-
 export default async function SettingsSection({
   params,
 }: {
@@ -70,18 +61,10 @@ export default async function SettingsSection({
   const authz = await getAuthz();
   if (!authz) notFound();
 
-  const isManager =
-    authz.isGlobalOwner ||
-    Array.from(authz.memberships.values()).some((r) => r === "owner");
-
-  // Members get only their personal settings; workspace administration stays
-  // with workspace owners and the global owner.
-  if (WORKSPACE_SECTIONS.has(section) && !isManager) notFound();
-
   const { title, description } = sections[section];
 
   return (
-    <SettingsShell isManager={isManager}>
+    <SettingsShell>
       <div className="space-y-6">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>

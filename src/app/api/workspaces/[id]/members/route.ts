@@ -12,6 +12,8 @@ import { getAuthz, canManageWorkspace } from "@/lib/authz";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const ONLINE_WINDOW_MS = 60_000;
+
 export async function GET(request: Request, ctx: RouteContext) {
   const authz = await getAuthz();
   if (!authz) {
@@ -30,10 +32,9 @@ export async function GET(request: Request, ctx: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Managers may see all members; others see only their own membership.
-    const isManager =
-      authz.isGlobalOwner || canManageWorkspace(authz, id);
-    if (!isManager && !authz.memberships.has(id)) {
+    // Any member may view the roster; only managers may modify it.
+    const isMember = authz.isGlobalOwner || authz.memberships.has(id);
+    if (!isMember) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
@@ -42,14 +43,11 @@ export async function GET(request: Request, ctx: RouteContext) {
         workspaceId: workspaceMembers.workspaceId,
         userId: workspaceMembers.userId,
         role: workspaceMembers.role,
+        lastSeenAt: workspaceMembers.lastSeenAt,
         createdAt: workspaceMembers.createdAt,
       })
       .from(workspaceMembers)
-      .where(
-        isManager
-          ? eq(workspaceMembers.workspaceId, id)
-          : inArray(workspaceMembers.userId, [authz.userId])
-      );
+      .where(eq(workspaceMembers.workspaceId, id));
 
     const userIds = memberRows.map((m) => m.userId);
     const userRows =
@@ -73,6 +71,10 @@ export async function GET(request: Request, ctx: RouteContext) {
       userId: m.userId,
       role: m.role,
       joinedAt: m.createdAt,
+      lastSeenAt: m.lastSeenAt,
+      isOnline:
+        m.lastSeenAt != null &&
+        Date.now() - new Date(m.lastSeenAt).getTime() < ONLINE_WINDOW_MS,
       ...usersById.get(m.userId),
     }));
 

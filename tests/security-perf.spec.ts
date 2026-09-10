@@ -72,23 +72,20 @@ test.describe("Security Headers", () => {
 });
 
 test.describe("Security - IDOR & Access Control", () => {
-  test("member cannot access workspace settings sections", async ({ page }) => {
+  test("member can view workspace settings sections read-only", async ({
+    page,
+  }) => {
     await signIn(page, "member@test.local", "TestMember123!");
     const sections = ["general", "members", "access", "workspaces", "projects"];
     for (const section of sections) {
-      const res = await page.request.get(`${BASE}/api/me`);
-      const me = await res.json();
-      if (!me.data.isGlobalOwner) {
-        const navRes = await page.goto(`/settings/${section}`);
-        await page.waitForTimeout(3000);
-        const body = await page.locator("body").textContent();
-        const got404 =
-          body?.includes("404") ||
-          body?.includes("not found") ||
-          body?.includes("Could not") ||
-          navRes?.url()?.includes("not-found");
-        expect(got404).toBeTruthy();
-      }
+      const navRes = await page.goto(`/settings/${section}`);
+      await page.waitForTimeout(1500);
+      const body = await page.locator("body").textContent();
+      // Every workspace settings page now renders for members (no 404) so the
+      // sidebar is identical for all users.
+      expect(navRes?.status()).not.toBe(404);
+      expect(body).not.toContain("Could not find");
+      expect(body).not.toContain("page not found");
     }
   });
 

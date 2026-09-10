@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  Building2,
   Check,
   Download,
   GripVertical,
@@ -309,7 +310,6 @@ export function ProjectsTable({
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [dropPos, setDropPos] = useState<"before" | "after" | null>(null);
-  const rowEls = useRef<Record<string, HTMLTableRowElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -409,16 +409,10 @@ export function ProjectsTable({
       });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to parse file");
-    }
+}
   };
 
-  const setRowRef =
-    (id: string) => (el: HTMLTableRowElement | null) => {
-      if (el) rowEls.current[id] = el;
-      else delete rowEls.current[id];
-    };
-
-  // Live preview: while dragging, visibly move the dragged row to the
+// Live preview: while dragging, visibly move the dragged row to the
   // hovered position. Derived at render time from drag state.
   const displayProjects = useMemo(() => {
     if (!dragId || dragId === overId || !overId) return projects;
@@ -433,11 +427,32 @@ export function ProjectsTable({
     return base;
   }, [projects, dragId, overId, dropPos]);
 
-  const handleDrop = (targetId: string) => {
+  // "Space-wise" grouping: keep each workspace's projects contiguous and mark
+  // the first row of every workspace with a group header.
+  const groupedProjects = useMemo(() => {
+    const order: string[] = [];
+    const buckets = new Map<string, ProjectWithAssignees[]>();
+    for (const p of displayProjects) {
+      const key = p.workspaceId ?? "unassigned";
+      if (!buckets.has(key)) {
+        buckets.set(key, []);
+        order.push(key);
+      }
+      buckets.get(key)!.push(p);
+    }
+    return order.flatMap((k) => buckets.get(k)!);
+  }, [displayProjects]);
+
+  const isGroupStart = (project: ProjectWithAssignees, idx: number) =>
+    idx === 0 ||
+    (project.workspaceId ?? "unassigned") !==
+      (groupedProjects[idx - 1].workspaceId ?? "unassigned");
+
+const handleDrop = () => {
     if (dragId) {
       // Persist using the live (already-moved) preview order.
-      const base = displayProjects.filter((p) => p.id !== dragId);
-      const movedIdx = displayProjects.findIndex((p) => p.id === dragId);
+      const base = groupedProjects.filter((p) => p.id !== dragId);
+      const movedIdx = groupedProjects.findIndex((p) => p.id === dragId);
       const afterId = base[movedIdx - 1]?.id ?? null;
       const beforeId = base[movedIdx]?.id ?? null;
       reorderProject.mutate({ id: dragId, afterId, beforeId });
@@ -451,16 +466,14 @@ export function ProjectsTable({
     setDropPos(null);
   };
 
-  const handleDragOver = (e: React.DragEvent, targetId: string) => {
+const handleDragOver = useCallback((e: React.DragEvent, targetId: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    const el = rowEls.current[targetId];
+    const el = e.currentTarget as HTMLTableRowElement;
     setOverId(targetId);
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      setDropPos(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
-    }
-  };
+    const rect = el.getBoundingClientRect();
+    setDropPos(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+  }, []);
 
   const handleDragStart = (
     e: React.DragEvent,
@@ -607,75 +620,89 @@ export function ProjectsTable({
           )}
           {!isLoading &&
             !isError &&
-            displayProjects.map((project) => {
+            groupedProjects.map((project, idx) => {
               const isTarget = overId === project.id;
+              const key = project.workspaceId ?? "unassigned";
               return (
-                <TableRow
-                  key={project.id}
-                  ref={setRowRef(project.id)}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, project)}
-                  onDragOver={(e) => handleDragOver(e, project.id)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    handleDrop(project.id);
-                  }}
-                  onDragEnd={resetDrag}
-                  className={cn(
-                    "group/row",
-                    dragId === project.id && "opacity-45",
-                    dragId &&
-                      isTarget &&
-                      "z-10 shadow-[0_2px_10px_-2px_rgba(0,0,0,0.2)]"
+                <Fragment key={project.id}>
+                  {isGroupStart(project, idx) && (
+                    <TableRow className="bg-muted/30">
+                      <TableCell
+                        colSpan={7}
+                        className="px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Building2 className="size-3.5" />
+                          {project.workspaceName ?? (key === "unassigned" ? "Unassigned" : "Workspace")}
+                        </span>
+                      </TableCell>
+                    </TableRow>
                   )}
-                >
-                  <TableCell className="w-8">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(project.id)}
-                      onChange={() => toggleSelected(project.id)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </TableCell>
-                  <TableCell className="w-8 pr-0">
-                    <span className="flex cursor-grab items-center text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-60 hover:opacity-100">
-                      <GripVertical className="size-4" />
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <Link
-                      href={`/projects/${project.id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {project.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <ResultSelectInline
-                      projectId={project.id}
-                      value={project.result ?? null}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <AssigneeMultiSelect
-                      projectId={project.id}
-                      value={project.assigneeIds ?? []}
-                    />
-                  </TableCell>
-                  <TableCell className="max-w-[280px]">
-                    <CommentsInline
-                      projectId={project.id}
-                      value={project.comments}
-                    />
-                  </TableCell>
-                  <TableCell className="w-16 text-right">
-                    <ProjectActionsMenu
-                      projectId={project.id}
-                      projectName={project.name}
-                      onTrashed={(id) => toggleSelected(id)}
-                    />
-                  </TableCell>
-                </TableRow>
+                  <TableRow
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, project)}
+                    onDragOver={(e) => handleDragOver(e, project.id)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleDrop();
+                    }}
+                    onDragEnd={resetDrag}
+                    className={cn(
+                      "group/row",
+                      dragId === project.id && "opacity-45",
+                      dragId &&
+                        isTarget &&
+                        "z-10 shadow-[0_2px_10px_-2px_rgba(0,0,0,0.2)]"
+                    )}
+                  >
+                    <TableCell className="w-8">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(project.id)}
+                        onChange={() => toggleSelected(project.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </TableCell>
+                    <TableCell className="w-8 pr-0">
+                      <span className="flex cursor-grab items-center text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-60 hover:opacity-100">
+                        <GripVertical className="size-4" />
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <Link
+                        href={`/projects/${project.id}`}
+                        className="font-medium hover:underline"
+                      >
+                        {project.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <ResultSelectInline
+                        projectId={project.id}
+                        value={project.result ?? null}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <AssigneeMultiSelect
+                        projectId={project.id}
+                        value={project.assigneeIds ?? []}
+                      />
+                    </TableCell>
+                    <TableCell className="max-w-[280px]">
+                      <CommentsInline
+                        projectId={project.id}
+                        value={project.comments}
+                      />
+                    </TableCell>
+                    <TableCell className="w-16 text-right">
+                      <ProjectActionsMenu
+                        projectId={project.id}
+                        projectName={project.name}
+                        onTrashed={(id) => toggleSelected(id)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                </Fragment>
               );
             })}
           <QuickAddRow type={type} />

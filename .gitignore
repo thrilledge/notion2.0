@@ -44,3 +44,8 @@ next-env.d.ts
 /uploads/
 /notion_export/
 /notion_export.zip
+
+# test/log artifacts
+/dev.log
+/playwright-report/
+/test-results/

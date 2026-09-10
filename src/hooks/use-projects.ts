@@ -8,7 +8,10 @@ import {
 } from "@tanstack/react-query";
 import type { Project } from "@/lib/db/schema";
 
-export type ProjectWithAssignees = Project & { assigneeIds?: string[] };
+export type ProjectWithAssignees = Project & {
+  assigneeIds?: string[];
+  workspaceName?: string | null;
+};
 
 export type ProjectInput = Partial<Omit<Project, "dueDate" | "assigneeIds">> & {
   dueDate?: string | null;

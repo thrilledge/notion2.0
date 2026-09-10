@@ -64,9 +64,11 @@ export async function POST(request: Request) {
     const url = await getSignedUrl(r2Client, command, { expiresIn: 300 });
 
     return NextResponse.json({
-      url,
-      key,
-      publicUrl: `${R2_CONFIG.publicUrl}/${key}`,
+      data: {
+        url,
+        key,
+        publicUrl: `${R2_CONFIG.publicUrl}/${key}`,
+      },
     });
   } catch {
     return NextResponse.json(

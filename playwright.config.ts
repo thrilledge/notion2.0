@@ -2,6 +2,8 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
+  globalSetup: "./tests/global-setup",
+  globalTeardown: "./tests/global-teardown",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 1,
