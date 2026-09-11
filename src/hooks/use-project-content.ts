@@ -58,6 +58,38 @@ export function useProjectContent(id: string | undefined) {
   });
 }
 
+export function useCreateBlocks(projectId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      blocks,
+    }: {
+      blocks: {
+        text?: string;
+        type?: string;
+        spans?: ProjectContentBlock["content"]["spans"];
+        clientKey?: string;
+      }[];
+    }) => {
+      const res = await fetch(`/api/projects/${projectId}/blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "Failed to create blocks");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["projects", projectId, "content"],
+      });
+    },
+  });
+}
+
 export function useCreateBlock(projectId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({

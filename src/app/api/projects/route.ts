@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { projectAssignees, projects, workspaces } from "@/lib/db/schema";
+import { projectAssignees, projects, pages, workspaces } from "@/lib/db/schema";
 import { getAuthz, getAccessibleProjectIds, canCreateProject } from "@/lib/authz";
 import { notifyProjectAssignees } from "@/lib/assignment-mail";
 
@@ -256,6 +256,17 @@ export async function POST(request: Request) {
         assigneeIds.map((userId) => ({ projectId: project.id, userId }))
       );
     }
+
+    // Every project starts with one empty page so the content editor is
+    // immediately ready to write in — without a page the project detail
+    // renders no editor at all.
+    await db.insert(pages).values({
+      title: project.name,
+      parentType: "project",
+      parentId: project.id,
+      position: 0,
+      createdById: authz.userId,
+    });
 
     // Notify newly-assigned users by email (no-op when SMTP unconfigured).
     const newAssigneeIds = assigneeIds ?? (data.assigneeId ? [data.assigneeId] : []);

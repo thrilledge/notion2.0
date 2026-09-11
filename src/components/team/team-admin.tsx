@@ -68,6 +68,11 @@ const roleBadge: Record<string, string> = {
   member: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
 };
 
+const TEAM_PROJECT_FOLDERS = [
+  { key: "client", label: "All Projects" },
+  { key: "side_project", label: "Side Projects" },
+];
+
 export function TeamAdmin() {
   const [workspaceId, setWorkspaceId] = useState<string>("");
   const workspaces = useWorkspaces();
@@ -431,8 +436,11 @@ function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
   const activeUser = users.find((u) => u.id === selectedUserId) ?? users[0];
 
   // Effective selection for a user: draft if present, else their real assignees.
-  const selectionFor = (userId: string) => {
-    const existing = drafts[userId];
+  const selectionFrom = (
+    userId: string,
+    draftsMap: Record<string, Set<string>>
+  ) => {
+    const existing = draftsMap[userId];
     if (existing) return existing;
     return new Set(
       projects
@@ -441,18 +449,45 @@ function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
     );
   };
 
+  const selectionFor = (userId: string) => selectionFrom(userId, drafts);
+
   const activeSelection = activeUser ? selectionFor(activeUser.id) : new Set<string>();
   const isDirty = activeUser?.id != null && dirtyUserId === activeUser.id;
 
-  const toggle = (projectId: string) => {
-    if (!activeUser) return;
+  const applyFor = (
+    userId: string,
+    compute: (current: Set<string>) => Set<string>
+  ) => {
     setDrafts((prev) => {
-      const current = new Set(selectionFor(activeUser.id));
-      if (current.has(projectId)) current.delete(projectId);
-      else current.add(projectId);
-      return { ...prev, [activeUser.id]: current };
+      const current = selectionFrom(userId, prev);
+      return { ...prev, [userId]: compute(current) };
     });
-    setDirtyUserId(activeUser.id);
+    setDirtyUserId(userId);
+  };
+
+  const toggleFolder = (key: string) => {
+    if (!activeUser) return;
+    const ids = projects.filter((p) => p.type === key).map((p) => p.id);
+    if (ids.length === 0) return;
+    applyFor(activeUser.id, (current) => {
+      const next = new Set(current);
+      const allSelected = ids.every((id) => current.has(id));
+      for (const id of ids) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (!activeUser) return;
+    applyFor(activeUser.id, () => new Set(projects.map((p) => p.id)));
+  };
+
+  const clearAll = () => {
+    if (!activeUser) return;
+    applyFor(activeUser.id, () => new Set());
   };
 
   if (isLoading)
@@ -496,28 +531,59 @@ function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
         </Select>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="max-h-80 space-y-1 overflow-y-auto">
-          {projects.length === 0 && (
-            <p className="text-sm text-muted-foreground">No projects.</p>
-          )}
-          {projects.map((p) => {
-            const selected = activeSelection.has(p.id);
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            {activeSelection.size} of {projects.length} projects assigned
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!activeUser || projects.length === 0}
+              onClick={selectAll}
+            >
+              Select all
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!activeUser || projects.length === 0}
+              onClick={clearAll}
+            >
+              Clear all
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-1">
+          {TEAM_PROJECT_FOLDERS.map((folder) => {
+            const ids = projects
+              .filter((p) => p.type === folder.key)
+              .map((p) => p.id);
+            if (ids.length === 0) return null;
+            const count = ids.filter((id) => activeSelection.has(id)).length;
             return (
               <button
-                key={p.id}
-                onClick={() => toggle(p.id)}
-                className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                  selected
+                type="button"
+                key={folder.key}
+                onClick={() => toggleFolder(folder.key)}
+                className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${
+                  count === ids.length && ids.length > 0
                     ? "border-primary/40 bg-primary/5"
-                    : "hover:bg-muted"
+                    : ""
                 }`}
               >
-                <span className="truncate">{p.name}</span>
+                <span className="font-medium">{folder.label}</span>
                 <Badge
                   variant="secondary"
-                  className={selected ? "bg-primary/10 text-primary" : ""}
+                  className={count === ids.length ? "bg-primary/10 text-primary" : ""}
                 >
-                  {selected ? "Assigned" : "Unassigned"}
+                  {count === ids.length
+                    ? "All selected"
+                    : count > 0
+                      ? `${count} of ${ids.length}`
+                      : "None"}
                 </Badge>
               </button>
             );

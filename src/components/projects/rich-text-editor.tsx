@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import type { ProjectContentBlock } from "@/hooks/use-project-content";
 import {
-  useCreateBlock,
+  useCreateBlocks,
   useUpdateBlock,
   useDeleteBlock,
 } from "@/hooks/use-project-content";
@@ -184,10 +184,20 @@ function rowsToDoc(blocks: ProjectContentBlock[]) {
   }
 
   if (content.length === 0) {
-    content.push({ type: "paragraph" });
+    // Empty page: lay down a canvas of blank lines so clicking line 4, 5,
+    // … places the caret on that exact line. (Blank paragraphs are real
+    // blocks, matching how the rest of the document persists.)
+    for (let n = 0; n < EMPTY_PAGE_LINES; n += 1) {
+      content.push({ type: "paragraph" });
+    }
   }
   return { type: "doc", content };
 }
+
+/** Number of blank lines shown when a page has no content yet, so the user
+ *  can click any line (4th, 5th, …) and start writing there instead of
+ *  being forced onto the first line. */
+const EMPTY_PAGE_LINES = 20;
 
 /** Convert a Tiptap JSON document back into editable block rows. */
 function docToRows(doc: { content?: JSONContent[] }): Row[] {
@@ -285,7 +295,7 @@ export function RichTextEditor({
   projectId: string;
   blocks: ProjectContentBlock[];
 }) {
-  const createBlock = useCreateBlock(projectId);
+  const createBlocks = useCreateBlocks(projectId);
   const updateBlock = useUpdateBlock(projectId);
   const deleteBlock = useDeleteBlock(projectId);
 
@@ -293,6 +303,11 @@ export function RichTextEditor({
   const [saving, setSaving] = useState(false);
   const savedCountRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Serialize save passes: while a pass (creates + updates) is still landing,
+  // queue the latest editor so the next diff runs only after the created rows
+  // have been mapped back to their real DB ids.
+  const savingRef = useRef(false);
+  const pendingEditorRef = useRef<Editor | null>(null);
 
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
@@ -326,7 +341,7 @@ export function RichTextEditor({
     () => ({
       attributes: {
         class:
-          "tiptap min-h-[6rem] w-full text-sm leading-relaxed text-foreground",
+          "tiptap min-h-[50rem] w-full text-sm leading-relaxed text-foreground",
       },
       handleKeyDown(_view: unknown, event: KeyboardEvent) {
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -340,8 +355,18 @@ export function RichTextEditor({
     []
   );
 
-  const persist = useCallback(
-    (editor: Editor) => {
+  const persistRef = useRef<(editor: Editor) => void>(() => {});
+
+  persistRef.current = (editor: Editor) => {
+      if (savingRef.current) {
+        // A save pass is in flight — remember the latest editor state and
+        // run it once the current pass finishes (so created rows get their
+        // real DB ids before the next diff is computed).
+        pendingEditorRef.current = editor;
+        return;
+      }
+      savingRef.current = true;
+
       const fresh = docToRows(editor.getJSON());
       const merged = mergeWithBaseline(baselineRef.current, fresh);
 
@@ -371,24 +396,63 @@ export function RichTextEditor({
 
       if (creates.length === 0 && updates.length === 0 && deletes.length === 0) {
         baselineRef.current = merged;
+        savingRef.current = false;
+        if (pendingEditorRef.current) {
+          const next = pendingEditorRef.current;
+          pendingEditorRef.current = null;
+          persistRef.current(next);
+        }
         return;
       }
 
-      const totalOps = creates.length + updates.length + deletes.length;
+      const totalOps =
+        (creates.length > 0 ? 1 : 0) + updates.length + deletes.length;
       savedCountRef.current = 0;
 
       const markDone = () => {
         savedCountRef.current += 1;
-        if (savedCountRef.current >= totalOps) setSaving(false);
+        if (savedCountRef.current >= totalOps) {
+          setSaving(false);
+          savingRef.current = false;
+          if (pendingEditorRef.current) {
+            const next = pendingEditorRef.current;
+            pendingEditorRef.current = null;
+            persistRef.current(next);
+          }
+        }
       };
 
       setSaving(true);
       baselineRef.current = merged;
 
-      for (const row of creates) {
-        createBlock.mutate(
-          { spans: row.spans, type: row.type === "paragraph" ? "paragraph" : row.type },
-          { onSettled: markDone }
+      if (creates.length > 0) {
+        // Batched, transactional create: one request for every new line so
+        // positions can't race on max+1 and rows can't be dropped. The server
+        // echoes the client row key back with the real DB id.
+        createBlocks.mutate(
+          {
+            blocks: creates.map((row) => ({
+              spans: row.spans,
+              type: row.type === "paragraph" ? "paragraph" : row.type,
+              clientKey: row.id,
+            })),
+          },
+          {
+            onSuccess: (created) => {
+              const rows = created?.data as
+                | { id: string; clientKey?: string }[]
+                | undefined;
+              if (rows?.length) {
+                baselineRef.current = baselineRef.current.map((r) => {
+                  const match = rows.find(
+                    (row) => row.clientKey === r.id
+                  );
+                  return match ? { ...r, id: match.id } : r;
+                });
+              }
+            },
+            onSettled: markDone,
+          }
         );
       }
       for (const { id, row } of updates) {
@@ -405,9 +469,7 @@ export function RichTextEditor({
       for (const id of deletes) {
         deleteBlock.mutate(id, { onSettled: markDone });
       }
-    },
-    [createBlock, updateBlock, deleteBlock]
-  );
+  };
 
   useEffect(() => {
     if (linkOpen) requestAnimationFrame(() => linkInputRef.current?.focus());
@@ -426,7 +488,7 @@ export function RichTextEditor({
     content: initialDoc,
     onUpdate: ({ editor: ed }) => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => persist(ed), 600);
+      timerRef.current = setTimeout(() => persistRef.current(ed), 600);
     },
   });
 
@@ -626,7 +688,25 @@ export function RichTextEditor({
         </div>
       )}
 
-      <EditorContent editor={editor} />
+      <div
+        className="w-full"
+        onClick={(e) => {
+          const ed = editorRef.current;
+          const target = e.target as HTMLElement | null;
+          if (!ed || !target) return;
+          // Clicking the editor's blank area (below/lines without a block) should
+          // move the caret to the end so typing continues there instead of
+          // jumping back to the very first line.
+          if (
+            target.classList?.contains("tiptap") &&
+            !target.closest("p, h1, h2, h3, li, ul, ol, blockquote")
+          ) {
+            ed.commands.focus("end");
+          }
+        }}
+      >
+        <EditorContent editor={editor} />
+      </div>
     </div>
   );
 }

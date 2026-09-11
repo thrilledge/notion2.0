@@ -133,7 +133,7 @@
 
 /* ---- Tiptap project editor ------------------------------------------- */
 [data-rich-text-editor] .tiptap {
-  min-height: 6rem;
+  min-height: 28rem;
   outline: none;
 }
 [data-rich-text-editor] .tiptap p.is-editor-empty:first-child::before {
