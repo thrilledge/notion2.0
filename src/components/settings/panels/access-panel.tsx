@@ -220,6 +220,11 @@ function MemberAccessRow({
   );
 }
 
+const PROJECT_FOLDERS = [
+  { key: "client", label: "All Projects" },
+  { key: "side_project", label: "Side Projects" },
+];
+
 function ProjectAccess({
   workspaceId,
   projectRows,
@@ -227,7 +232,7 @@ function ProjectAccess({
   canManage,
 }: {
   workspaceId: string;
-  projectRows: { id: string; name: string; assigneeIds: string[] }[];
+  projectRows: { id: string; name: string; type: string; assigneeIds: string[] }[];
   userId: string;
   canManage: boolean;
 }) {
@@ -248,13 +253,32 @@ function ProjectAccess({
   const effective = draft ?? base;
   const isDirty = dirty && draft !== null;
 
-  const toggle = (projectId: string) => {
-    if (!canManage) return;
-    const next = new Set(draft ?? base);
-    if (next.has(projectId)) next.delete(projectId);
-    else next.add(projectId);
+  const update = (next: Set<string>) => {
     setDraft(next);
     setDirty(true);
+  };
+
+  const toggleFolder = (key: string) => {
+    if (!canManage) return;
+    const ids = projectRows.filter((p) => p.type === key).map((p) => p.id);
+    if (ids.length === 0) return;
+    const allSelected = ids.every((id) => effective.has(id));
+    const next = new Set(effective);
+    for (const id of ids) {
+      if (allSelected) next.delete(id);
+      else next.add(id);
+    }
+    update(next);
+  };
+
+  const selectAll = () => {
+    if (!canManage) return;
+    update(new Set(projectRows.map((p) => p.id)));
+  };
+
+  const clearAll = () => {
+    if (!canManage) return;
+    update(new Set());
   };
 
   if (projectRows.length === 0) {
@@ -267,22 +291,62 @@ function ProjectAccess({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-2">
-        {projectRows.map((p) => {
-          const selected = effective.has(p.id);
-          return (
-            <div
-              key={p.id}
-              onClick={() => toggle(p.id)}
-              className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                canManage ? "cursor-pointer hover:bg-muted" : "cursor-default"
-              } ${selected ? "border-primary/40 bg-primary/5" : ""}`}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">
+          {effective.size} of {projectRows.length} projects accessible
+        </span>
+        {canManage && (
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={selectAll}
             >
-              <span className="truncate">{p.name}</span>
-              <span className="ml-2 text-sm">
-                {selected ? "✓" : "—"}
+              Select all
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={clearAll}
+            >
+              Clear all
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-1">
+        {PROJECT_FOLDERS.map((folder) => {
+          const ids = projectRows
+            .filter((p) => p.type === folder.key)
+            .map((p) => p.id);
+          if (ids.length === 0) return null;
+          const count = ids.filter((id) => effective.has(id)).length;
+          return (
+            <button
+              type="button"
+              key={folder.key}
+              onClick={() => toggleFolder(folder.key)}
+              className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${
+                count === ids.length && ids.length > 0
+                  ? "border-primary/40 bg-primary/5"
+                  : ""
+              }`}
+            >
+              <span className="font-medium">{folder.label}</span>
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>
+                  {count === ids.length
+                    ? "All selected"
+                    : count > 0
+                      ? `${count} of ${ids.length} selected`
+                      : "None selected"}
+                </span>
+                <span>{count === ids.length ? "✓" : "—"}</span>
               </span>
-            </div>
+            </button>
           );
         })}
       </div>

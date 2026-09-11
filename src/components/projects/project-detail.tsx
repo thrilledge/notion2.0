@@ -750,8 +750,7 @@ export function ProjectDetail({
 
                 Loading page content...
               </div>
-            ) : content.data &&
-              content.data.pages.length > 0 ? (
+            ) : content.data ? (
               <section className="mb-12">
 
                 {content.data.pages.map(
@@ -801,11 +800,28 @@ export function ProjectDetail({
                           key={`${project.id}-${page.id}`}
                           projectId={project.id}
                           blocks={pageBlocks}
+                          
                         />
 
                       </div>
                     );
                   }
+                )}
+
+                {/* Project has no page yet (e.g. created before the editor
+                    existed): always show the editor so content can be
+                    written; the first save creates the page. */}
+                {content.data.pages.length === 0 && (
+                  <div
+                    className="mb-8"
+                    data-project-content-page="__empty__"
+                  >
+                    <RichTextEditor
+                      key={`${project.id}-__empty__`}
+                      projectId={project.id}
+                      blocks={[]}
+                    />
+                  </div>
                 )}
 
               </section>

@@ -49,3 +49,4 @@ next-env.d.ts
 /dev.log
 /playwright-report/
 /test-results/
+/dev.err.log

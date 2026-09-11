@@ -24,7 +24,29 @@ const createSchema = z.object({
   type: z
     .enum(["paragraph", "heading_1", "heading_2", "heading_3", "to_do", "bulleted_list", "numbered_list", "quote"])
     .default("paragraph"),
+  clientKey: z.string().max(64).optional(),
 });
+
+const batchCreateSchema = z.object({
+  blocks: z.array(createSchema).min(1).max(200),
+});
+
+type CreateInput = {
+  text?: string;
+  spans?: z.infer<typeof spanSchema>[];
+  type?: string;
+  clientKey?: string;
+};
+
+function buildContent(type: string, text: string, spans: Record<string, unknown>[]): Record<string, unknown> {
+  if (type === "heading_1" || type === "heading_2" || type === "heading_3") {
+    return { text, spans, level: Number(type.slice(-1)) };
+  }
+  if (type === "to_do") {
+    return { text, spans, checked: false };
+  }
+  return { text, spans };
+}
 
 const updateSchema = z.object({
   blockId: z.string().uuid(),
@@ -111,13 +133,27 @@ export async function POST(request: Request, ctx: RouteContext) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const parsed = createSchema.safeParse(body);
+  // Try the batch shape first (`{ blocks: [...] }`); fall back to a single
+  // block shaped like the legacy API (`{ text, spans, type }`).
+  // We must check for the `blocks` key explicitly because zod strips unknown
+  // keys by default — `{ blocks: [...] }` would happily parse as a single
+  // block with `blocks` simply ignored.
+  const hasBatchKey =
+    typeof body === "object" && body !== null && "blocks" in body;
+  if (!hasBatchKey) {
+    const single = createSchema.safeParse(body);
+    if (single.success) {
+      body = { blocks: [single.data] };
+    }
+  }
+  const parsed = batchCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request body", details: parsed.error.flatten() },
       { status: 400 }
     );
   }
+  const inputs: CreateInput[] = parsed.data.blocks;
 
   try {
     const [project] = await db
@@ -134,83 +170,68 @@ export async function POST(request: Request, ctx: RouteContext) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Find the first linked page for this project, or create one.
-    const pageIds = await db
-      .select({ id: pages.id })
-      .from(pages)
-      .where(and(eq(pages.parentId, id), eq(pages.parentType, "project")))
-      .limit(1);
+    const inserted = await db.transaction(async (tx) => {
+      // Find the first linked page for this project, or create one.
+      const pageIds = await tx
+        .select({ id: pages.id })
+        .from(pages)
+        .where(and(eq(pages.parentId, id), eq(pages.parentType, "project")))
+        .limit(1);
 
-    let pageId: string;
-    if (pageIds.length === 0) {
-      const [newPage] = await db
-        .insert(pages)
-        .values({
-          title: project.name,
-          parentType: "project",
-          parentId: id,
-          position: 0,
-          createdById: authz.userId,
-        })
-        .returning({ id: pages.id });
-      pageId = newPage.id;
-    } else {
-      pageId = pageIds[0].id;
-    }
+      let pageId: string;
+      if (pageIds.length === 0) {
+        const [newPage] = await tx
+          .insert(pages)
+          .values({
+            title: project.name,
+            parentType: "project",
+            parentId: id,
+            position: 0,
+            createdById: authz.userId,
+          })
+          .returning({ id: pages.id });
+        pageId = newPage.id;
+      } else {
+        pageId = pageIds[0].id;
+      }
 
-    // Compute the next position (max + 1) for this page.
-    const lastBlock = await db
-      .select({ position: pageBlocks.position })
-      .from(pageBlocks)
-      .where(eq(pageBlocks.pageId, pageId))
-      .orderBy(desc(pageBlocks.position))
-      .limit(1);
-    const nextPosition =
-      lastBlock.length > 0 ? lastBlock[0].position + 1 : 0;
+      // Compute the start position ONCE so a multi-block write can't race
+      // on per-row max+1.
+      const lastBlock = await tx
+        .select({ position: pageBlocks.position })
+        .from(pageBlocks)
+        .where(eq(pageBlocks.pageId, pageId))
+        .orderBy(desc(pageBlocks.position))
+        .limit(1);
+      const start = lastBlock.length > 0 ? lastBlock[0].position : -1;
 
-    const type = parsed.data.type;
-    const spans = parsed.data.spans ?? (
-      parsed.data.text ? [{ text: parsed.data.text }] : []
-    );
-    const text = parsed.data.spans
-      ? parsed.data.spans.map((s) => s.text).join("")
-      : (parsed.data.text ?? "");
+      const rows: { id: string; pageId: string; blockId: string; type: string; content: Record<string, unknown>; parentBlockId: string | null; position: number; createdAt: Date; clientKey?: string }[] = [];
+      for (let i = 0; i < inputs.length; i += 1) {
+        const item = inputs[i];
+        const type = (item.type || "paragraph") as string;
+        const spans = (item.spans ?? (item.text ? [{ text: item.text }] : [])) as Record<string, unknown>[];
+        const text = item.spans ? item.spans.map((s) => s.text).join("") : (item.text ?? "");
+        const [row] = await tx
+          .insert(pageBlocks)
+          .values({
+            pageId,
+            blockId: randomUUID(),
+            type,
+            content: buildContent(type, text, spans),
+            position: start + 1 + i,
+          })
+          .returning();
+        rows.push({ ...row, clientKey: item.clientKey });
+      }
 
-    let content: Record<string, unknown> = {};
-    if (type === "paragraph") {
-      content = { text, spans };
-    } else if (type === "heading_1" || type === "heading_2" || type === "heading_3") {
-      content = {
-        text,
-        spans,
-        level: Number(type.slice(-1)),
-      };
-    } else if (type === "to_do") {
-      content = {
-        text,
-        spans,
-        checked: false,
-      };
-    } else {
-      content = { text, spans };
-    }
+      return rows;
+    });
 
-    const [block] = await db
-      .insert(pageBlocks)
-      .values({
-        pageId,
-        blockId: randomUUID(),
-        type,
-        content,
-        position: nextPosition,
-      })
-      .returning();
-
-    return NextResponse.json({ data: block }, { status: 201 });
+    return NextResponse.json({ data: inserted }, { status: 201 });
   } catch (error) {
-    console.error("Failed to create block:", error);
+    console.error("Failed to create blocks:", error);
     return NextResponse.json(
-      { error: "Failed to create block" },
+      { error: "Failed to create blocks" },
       { status: 500 }
     );
   }
