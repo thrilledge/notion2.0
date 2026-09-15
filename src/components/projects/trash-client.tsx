@@ -34,7 +34,10 @@ export function TrashClient() {
     );
 
   const remove = (id: string) =>
-    del.mutate(id, { onSuccess: () => toast.success("Deleted forever") });
+    del.mutate(id, {
+      onSuccess: () => toast.success("Deleted forever"),
+      onError: (e) => toast.error(e.message ?? "Failed to delete forever"),
+    });
 
   return (
     <div className="space-y-6">

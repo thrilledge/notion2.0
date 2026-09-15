@@ -8,7 +8,7 @@ import {
   workspaceMembers,
   type WorkspaceRole,
 } from "@/lib/db/schema";
-import { getAuthz, canManageWorkspace } from "@/lib/authz";
+import { getAuthz, canManageWorkspace, grantAllFolders } from "@/lib/authz";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -142,6 +142,9 @@ export async function POST(request: Request, ctx: RouteContext) {
         role: parsed.data.role as WorkspaceRole,
       })
       .onConflictDoNothing();
+
+    // New members can see existing folders until the owner narrows access.
+    await grantAllFolders(id, targetUser.id);
 
     return NextResponse.json({ data: { success: true } }, { status: 201 });
   } catch (error) {

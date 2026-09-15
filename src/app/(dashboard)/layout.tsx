@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { syncUser } from "@/lib/sync-user";
-import { getAuthz } from "@/lib/authz";
+import { getAuthz, getAccessibleFolders } from "@/lib/authz";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -31,10 +31,12 @@ export default async function DashboardLayout({
     (authz.isGlobalOwner ||
       Array.from(authz.memberships.values()).some((r) => r === "owner"));
 
+  const folders = authz ? await getAccessibleFolders(authz) : [];
+
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider>
-        <AppSidebar user={user} canManageTeam={canManageTeam} />
+        <AppSidebar user={user} canManageTeam={canManageTeam} folders={folders} />
         <div className="flex min-h-screen flex-1 flex-col">
           <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger />

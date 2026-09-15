@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { hostingClients } from "@/lib/db/schema";
-import { getAuthz, canViewWorkspaceContent } from "@/lib/authz";
+import { getAuthz, canViewHostingClient } from "@/lib/authz";
 import { HostingClientDetail } from "@/components/hosting/hosting-client-detail";
 
 export const metadata: Metadata = {
@@ -28,10 +28,7 @@ export default async function HostingClientDetailPage({
 
   if (!client) notFound();
 
-  if (
-    !client.workspaceId ||
-    !canViewWorkspaceContent(authz, client.workspaceId)
-  ) {
+  if (!(await canViewHostingClient(authz, client.id))) {
     notFound();
   }
 

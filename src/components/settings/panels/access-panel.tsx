@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Save, Loader2, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { Save, Loader2, ShieldCheck, Folder } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -26,8 +27,8 @@ import {
   useCurrentUser,
   useWorkspaceMembers,
   useSetRole,
-  useAssignments,
-  useSetAssignments,
+  useFolderAccess,
+  useSetFolderAccess,
   type WorkspaceMemberRow,
 } from "@/hooks/use-admin";
 import { WorkspacePicker, SettingsCard } from "@/components/settings/settings-card";
@@ -43,23 +44,18 @@ export function AccessPanel() {
   const { data: members, isLoading: membersLoading } = useWorkspaceMembers(
     wsId || null
   );
-  const { data: assignmentData, isLoading: assignmentLoading } =
-    useAssignments(wsId || null);
+  const { data: folderAccessData, isLoading: accessLoading } =
+    useFolderAccess(wsId || null);
 
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const activeMember =
     (members ?? []).find((m) => m.userId === selectedUserId) ??
     (members ?? [])[0];
 
-  const { projects, users } = useMemo(
-    () => ({
-      projects: assignmentData?.projects ?? [],
-      users: assignmentData?.users ?? [],
-    }),
-    [assignmentData]
-  );
+  const folders = folderAccessData?.folders ?? [];
+  const users = folderAccessData?.users ?? [];
 
-  const loading = membersLoading || assignmentLoading;
+  const loading = membersLoading || accessLoading;
 
   if (loading) {
     return (
@@ -88,7 +84,7 @@ export function AccessPanel() {
               <TableRow>
                 <TableHead>Member</TableHead>
                 <TableHead>Workspace role</TableHead>
-                <TableHead className="text-right">Project access</TableHead>
+                <TableHead className="text-right">Folder access</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -102,23 +98,21 @@ export function AccessPanel() {
                   </TableCell>
                 </TableRow>
               )}
-              {(members ?? []).map((m) => (
-                <MemberAccessRow
-                  key={m.userId}
-                  member={m}
-                  workspaceId={wsId}
-                  canManage={canManage}
-                  projectCount={
-                    users.find((u) => u.id === m.userId)
-                      ? projects.filter((p) =>
-                          p.assigneeIds.includes(m.userId)
-                        ).length
-                      : 0
-                  }
-                  isSelected={activeMember?.userId === m.userId}
-                  onSelect={() => setSelectedUserId(m.userId)}
-                />
-              ))}
+              {(members ?? []).map((m) => {
+                const u = users.find((u) => u.id === m.userId);
+                const count = u?.grantedFolderIds.length ?? 0;
+                return (
+                  <MemberAccessRow
+                    key={m.userId}
+                    member={m}
+                    workspaceId={wsId}
+                    canManage={canManage}
+                    folderCount={count}
+                    isSelected={activeMember?.userId === m.userId}
+                    onSelect={() => setSelectedUserId(m.userId)}
+                  />
+                );
+              })}
             </TableBody>
           </Table>
         </div>
@@ -129,13 +123,13 @@ export function AccessPanel() {
           title={
             <span className="inline-flex items-center gap-2">
               <ShieldCheck className="size-4 text-muted-foreground" />
-              Project access for {activeMember.fullName ?? activeMember.email}
+              Folder access for {activeMember.fullName ?? activeMember.email}
             </span>
           }
         >
-          <ProjectAccess
+          <FolderAccess
             workspaceId={wsId}
-            projectRows={projects}
+            folderRows={folders}
             userId={activeMember.userId}
             canManage={canManage}
           />
@@ -149,14 +143,14 @@ function MemberAccessRow({
   member,
   workspaceId,
   canManage,
-  projectCount,
+  folderCount,
   isSelected,
   onSelect,
 }: {
   member: WorkspaceMemberRow;
   workspaceId: string;
   canManage: boolean;
-  projectCount: number;
+  folderCount: number;
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -214,165 +208,113 @@ function MemberAccessRow({
         </div>
       </TableCell>
       <TableCell className="text-right">
-        <Badge variant="secondary">{projectCount} projects</Badge>
+        <Badge variant="secondary">{folderCount} folders</Badge>
       </TableCell>
     </TableRow>
   );
 }
 
-const PROJECT_FOLDERS = [
-  { key: "client", label: "All Projects" },
-  { key: "side_project", label: "Side Projects" },
-];
-
-function ProjectAccess({
+function FolderAccess({
   workspaceId,
-  projectRows,
+  folderRows,
   userId,
   canManage,
 }: {
   workspaceId: string;
-  projectRows: { id: string; name: string; type: string; assigneeIds: string[] }[];
+  folderRows: { id: string; name: string; kind: string; code: string | null }[];
   userId: string;
   canManage: boolean;
 }) {
-  const setAssignments = useSetAssignments(workspaceId);
+  const { data } = useFolderAccess(workspaceId);
+  const setFolderAccess = useSetFolderAccess(workspaceId);
   const [draft, setDraft] = useState<Set<string> | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  const base = useMemo(
-    () =>
-      new Set(
-        projectRows
-          .filter((p) => p.assigneeIds.includes(userId))
-          .map((p) => p.id)
-      ),
-    [projectRows, userId]
-  );
+  const currentUser = data?.users.find((u) => u.id === userId);
+  const base =
+    currentUser?.grantedFolderIds ?? folderRows.map((f) => f.id);
 
-  const effective = draft ?? base;
-  const isDirty = dirty && draft !== null;
+  const effective = draft ?? new Set(base);
 
-  const update = (next: Set<string>) => {
-    setDraft(next);
-    setDirty(true);
-  };
-
-  const toggleFolder = (key: string) => {
-    if (!canManage) return;
-    const ids = projectRows.filter((p) => p.type === key).map((p) => p.id);
-    if (ids.length === 0) return;
-    const allSelected = ids.every((id) => effective.has(id));
-    const next = new Set(effective);
-    for (const id of ids) {
-      if (allSelected) next.delete(id);
-      else next.add(id);
-    }
-    update(next);
-  };
-
-  const selectAll = () => {
-    if (!canManage) return;
-    update(new Set(projectRows.map((p) => p.id)));
-  };
-
-  const clearAll = () => {
-    if (!canManage) return;
-    update(new Set());
-  };
-
-  if (projectRows.length === 0) {
+  if (folderRows.length === 0) {
     return (
       <p className="py-6 text-center text-sm text-muted-foreground">
-        No projects in this workspace yet.
+        No folders in this workspace yet.
       </p>
     );
   }
 
+  const toggle = (folderId: string) => {
+    if (!canManage) return;
+    const next = new Set(effective);
+    if (next.has(folderId)) next.delete(folderId);
+    else next.add(folderId);
+    setDraft(next);
+    setDirty(true);
+  };
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">
-          {effective.size} of {projectRows.length} projects accessible
+          {effective.size} of {folderRows.length} folders granted
         </span>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={selectAll}
-            >
-              Select all
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={clearAll}
-            >
-              Clear all
-            </Button>
-          </div>
-        )}
       </div>
 
       <div className="space-y-1">
-        {PROJECT_FOLDERS.map((folder) => {
-          const ids = projectRows
-            .filter((p) => p.type === folder.key)
-            .map((p) => p.id);
-          if (ids.length === 0) return null;
-          const count = ids.filter((id) => effective.has(id)).length;
+        {folderRows.map((folder) => {
+          const granted = effective.has(folder.id);
           return (
             <button
               type="button"
-              key={folder.key}
-              onClick={() => toggleFolder(folder.key)}
+              key={folder.id}
+              onClick={() => toggle(folder.id)}
               className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${
-                count === ids.length && ids.length > 0
-                  ? "border-primary/40 bg-primary/5"
-                  : ""
+                granted ? "border-primary/40 bg-primary/5" : ""
               }`}
             >
-              <span className="font-medium">{folder.label}</span>
+              <span className="flex items-center gap-2 font-medium">
+                <Folder className="size-4 text-muted-foreground" />
+                {folder.name}
+                {folder.code && (
+                  <span className="text-[10px] uppercase text-muted-foreground">
+                    system
+                  </span>
+                )}
+              </span>
               <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>
-                  {count === ids.length
-                    ? "All selected"
-                    : count > 0
-                      ? `${count} of ${ids.length} selected`
-                      : "None selected"}
-                </span>
-                <span>{count === ids.length ? "✓" : "—"}</span>
+                {granted ? "Granted" : "Hidden"}
+                <span>{granted ? "✓" : "—"}</span>
               </span>
             </button>
           );
         })}
       </div>
+
       <div className="flex items-center justify-between border-t pt-3">
         <span className="text-xs text-muted-foreground">
-          {effective.size} of {projectRows.length} projects accessible
+          {effective.size} of {folderRows.length} folders granted
         </span>
         {canManage && (
           <Button
-            disabled={setAssignments.isPending || !isDirty}
+            disabled={setFolderAccess.isPending || !dirty || draft === null}
             onClick={() =>
-              setAssignments.mutate(
+              setFolderAccess.mutate(
                 {
                   userId,
-                  projectIds: Array.from(effective),
+                  folderIds: Array.from(effective),
                 },
                 {
                   onSuccess: () => {
                     setDraft(null);
                     setDirty(false);
+                    toast.success("Folder access updated");
                   },
                 }
               )
             }
           >
-            {setAssignments.isPending ? (
+            {setFolderAccess.isPending ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <Save className="size-4" />

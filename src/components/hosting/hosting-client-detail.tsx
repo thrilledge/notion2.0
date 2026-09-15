@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -98,6 +98,19 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
     client.dueDate ? toInputDate(new Date(client.dueDate)) : ""
   );
 
+  const editedRef = useRef(false);
+
+  useEffect(() => {
+    const p = live.data;
+    if (!p || editedRef.current) return;
+    setDomain(p.domain);
+    setClientName(p.clientName ?? "");
+    setSummary(p.summary ?? "");
+    setComments(p.comments ?? "");
+    setText(p.text ?? "");
+    setDueDate(p.dueDate ? toInputDate(new Date(p.dueDate)) : "");
+  }, [live.data]);
+
   const saveField = (
     data: Parameters<typeof update.mutate>[0]["data"],
     toastMsg?: string
@@ -105,7 +118,10 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
     update.mutate(
       { id: client.id, data },
       {
-        onSuccess: () => toastMsg && toast.success(toastMsg),
+        onSuccess: () => {
+          editedRef.current = false;
+          toastMsg && toast.success(toastMsg);
+        },
         onError: (err) =>
           toast.error(
             err instanceof Error ? err.message : "Failed to save"
@@ -180,7 +196,10 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
 
           <input
             value={domain}
-            onChange={(e) => setDomain(e.target.value)}
+            onChange={(e) => {
+              editedRef.current = true;
+              setDomain(e.target.value);
+            }}
             onBlur={() => {
               const trimmed = domain.trim();
               if (trimmed && trimmed !== c.domain) {
@@ -210,7 +229,10 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
             >
               <input
                 value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
+                onChange={(e) => {
+                  editedRef.current = true;
+                  setClientName(e.target.value);
+                }}
                 onBlur={() => {
                   const trimmed = clientName.trim();
                   if (trimmed !== (c.clientName ?? "")) {
@@ -233,6 +255,7 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
                 type="date"
                 value={dueDate}
                 onChange={(e) => {
+                  editedRef.current = true;
                   setDueDate(e.target.value);
                   saveField({
                     dueDate: e.target.value
@@ -369,7 +392,10 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
                 </div>
                 <textarea
                   value={summary}
-                  onChange={(e) => setSummary(e.target.value)}
+                  onChange={(e) => {
+                    editedRef.current = true;
+                    setSummary(e.target.value);
+                  }}
                   onBlur={() => saveText("summary", summary, "Summary saved")}
                   placeholder="Type something..."
                   rows={4}
@@ -386,7 +412,10 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
                 </div>
                 <textarea
                   value={text}
-                  onChange={(e) => setText(e.target.value)}
+                  onChange={(e) => {
+                    editedRef.current = true;
+                    setText(e.target.value);
+                  }}
                   onBlur={() => saveText("text", text, "Details saved")}
                   placeholder="Type something..."
                   rows={4}
@@ -402,7 +431,10 @@ export function HostingClientDetail({ client }: { client: HostingClient }) {
               </div>
               <textarea
                 value={comments}
-                onChange={(e) => setComments(e.target.value)}
+                onChange={(e) => {
+                  editedRef.current = true;
+                  setComments(e.target.value);
+                }}
                 onBlur={() =>
                   saveText("comments", comments, "Comments saved")
                 }

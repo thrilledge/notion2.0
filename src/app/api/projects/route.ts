@@ -11,6 +11,8 @@ const querySchema = z.object({
   status: z.string().optional(),
   result: z.string().optional(),
   assigneeId: z.string().uuid().optional(),
+  folderId: z.string().uuid().optional(),
+  workspaceId: z.string().uuid().optional(),
   search: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(1000),
   offset: z.coerce.number().int().min(0).default(0),
@@ -34,7 +36,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const { type, status, result, assigneeId, search, limit, offset, sortBy, sortDir, trashed } =
+  const { type, status, result, assigneeId, folderId, workspaceId, search, limit, offset, sortBy, sortDir, trashed } =
     parsed.data;
 
   const ctx = await getAuthz();
@@ -43,7 +45,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    const accessibleIds = await getAccessibleProjectIds(ctx);
+    const accessibleIds = workspaceId
+      ? await getAccessibleProjectIds(ctx, workspaceId)
+      : await getAccessibleProjectIds(ctx);
     if (accessibleIds.length === 0) {
       return NextResponse.json({
         data: [],
@@ -52,6 +56,16 @@ export async function GET(request: Request) {
     }
 
     const conditions = [inArray(projects.id, accessibleIds)];
+
+    // Folder membership filter (custom folders only): restrict to projects
+    // explicitly linked to this folder. The server already ensures the folder
+    // itself is accessible before the UI ever calls this with a folderId.
+    if (folderId) {
+      conditions.push(sql`exists (
+        select 1 from folder_projects fp
+        where fp.folder_id = ${folderId} and fp.project_id = projects.id
+      )`);
+    }
 
     // Trash filter: by default exclude trashed projects; when requested, only
     // show trashed ones.

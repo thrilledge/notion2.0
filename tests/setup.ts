@@ -15,6 +15,9 @@ const OWNER_NAME = "QA Test Owner";
 const MEMBER_EMAIL = "member@test.local";
 const MEMBER_PASSWORD = "TestMember123!";
 const MEMBER_NAME = "QA Test Member";
+const FOLDER_MEMBER_EMAIL = "folderqamember@test.local";
+const FOLDER_MEMBER_PASSWORD = "FolderQA123!";
+const FOLDER_MEMBER_NAME = "QA Folder Member";
 
 async function ensureUser(
   email: string,
@@ -57,12 +60,21 @@ async function main() {
   console.log("\n2. Ensuring member user...");
   const memberId = await ensureUser(MEMBER_EMAIL, MEMBER_PASSWORD, MEMBER_NAME);
 
+  console.log("\n2b. Ensuring folder-qa member user...");
+  const folderMemberId = await ensureUser(
+    FOLDER_MEMBER_EMAIL,
+    FOLDER_MEMBER_PASSWORD,
+    FOLDER_MEMBER_NAME
+  );
+
   // Insert users into the users table (syncUser would do this on login, but we need them now for FK)
   console.log("\n3. Inserting users into DB...");
   await sql`INSERT INTO users (id, email, full_name, role, status) VALUES (${ownerId}, ${OWNER_EMAIL}, ${OWNER_NAME}, 'owner', 'active') ON CONFLICT (id) DO UPDATE SET role = 'owner', full_name = ${OWNER_NAME}`;
   console.log(`  Owner user in DB ensured`);
   await sql`INSERT INTO users (id, email, full_name, role, status) VALUES (${memberId}, ${MEMBER_EMAIL}, ${MEMBER_NAME}, 'member', 'active') ON CONFLICT (id) DO UPDATE SET full_name = ${MEMBER_NAME}`;
   console.log(`  Member user in DB ensured`);
+  await sql`INSERT INTO users (id, email, full_name, role, status) VALUES (${folderMemberId}, ${FOLDER_MEMBER_EMAIL}, ${FOLDER_MEMBER_NAME}, 'member', 'active') ON CONFLICT (id) DO UPDATE SET full_name = ${FOLDER_MEMBER_NAME}`;
+  console.log(`  Folder-qa member user in DB ensured`);
 
   // Find or create workspace
   console.log("\n4. Setting up workspace...");
@@ -84,6 +96,8 @@ async function main() {
   console.log(`  Owner membership ensured`);
   await sql`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (${wsId}, ${memberId}, 'member') ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'member'`;
   console.log(`  Member membership ensured`);
+  await sql`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (${wsId}, ${folderMemberId}, 'member') ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'member'`;
+  console.log(`  Folder-qa member membership ensured`);
 
   await sql.end();
   await admin.auth.signOut();

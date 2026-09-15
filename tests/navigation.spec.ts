@@ -45,9 +45,23 @@ test.describe("Full Navigation & Links", () => {
       if (await link.isVisible().catch(() => false)) {
         const href = await link.getAttribute("href");
         if (href && href.startsWith("/") && !href.startsWith("//")) {
-          await link.click();
-          await page.waitForTimeout(1000);
-          expect(page.url()).toContain(href);
+          // Dev-mode Next.js can drop clicks issued while a previous
+          // navigation is still in-flight; retry until the URL commits.
+          let navigated = false;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            await link.click();
+            navigated = await page
+              .waitForURL(
+                (url) => url.pathname === href || url.pathname.startsWith(href + "?"),
+                { timeout: 4000 }
+              )
+              .then(
+                () => true,
+                () => false
+              );
+            if (navigated) break;
+          }
+          expect(navigated, `Sidebar link failed to navigate to ${href}`).toBeTruthy();
         }
       }
     }

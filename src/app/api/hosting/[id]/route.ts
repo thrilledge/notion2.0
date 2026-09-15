@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { hostingClients } from "@/lib/db/schema";
 import {
   getAuthz,
-  canViewWorkspaceContent,
+  canViewHostingClient,
   canEditWorkspaceContent,
   canManageWorkspace,
 } from "@/lib/authz";
@@ -59,7 +59,7 @@ export async function GET(request: Request, ctx: RouteContext) {
       );
     }
 
-    if (!client.workspaceId || !canViewWorkspaceContent(authz, client.workspaceId)) {
+    if (!(await canViewHostingClient(authz, id))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 

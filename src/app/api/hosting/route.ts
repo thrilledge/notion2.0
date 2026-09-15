@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq, ilike, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { hostingClients } from "@/lib/db/schema";
-import { getAuthz, getAccessibleWorkspaceIds, canEditWorkspaceContent } from "@/lib/authz";
+import { getAuthz, getAccessibleWorkspaceIds, canEditWorkspaceContent, getAccessibleHostingClientIds } from "@/lib/authz";
 
 const querySchema = z.object({
   status: z.string().optional(),
   result: z.string().optional(),
   assigneeId: z.string().uuid().optional(),
+  folderId: z.string().uuid().optional(),
+  workspaceId: z.string().uuid().optional(),
   search: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -36,7 +38,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const { status, result, assigneeId, search, limit, offset, sortBy, sortDir } =
+  const { status, result, assigneeId, folderId, workspaceId, search, limit, offset, sortBy, sortDir } =
     parsed.data;
 
   try {
@@ -48,7 +50,22 @@ export async function GET(request: Request) {
       });
     }
 
-    const conditions = [inArray(hostingClients.workspaceId, workspaceIds)];
+    const accessibleIds = workspaceId
+      ? await getAccessibleHostingClientIds(authz, workspaceId)
+      : await getAccessibleHostingClientIds(authz);
+    if (accessibleIds.length === 0) {
+      return NextResponse.json({
+        data: [],
+        meta: { total: 0, limit, offset },
+      });
+    }
+
+    const conditions = [
+      inArray(hostingClients.id, accessibleIds),
+      inArray(hostingClients.workspaceId, workspaceIds),
+    ];
+
+    if (workspaceId) conditions.push(eq(hostingClients.workspaceId, workspaceId));
 
     if (status)
       conditions.push(
@@ -73,6 +90,11 @@ export async function GET(request: Request) {
       );
     if (assigneeId)
       conditions.push(eq(hostingClients.assigneeId, assigneeId));
+    if (folderId)
+      conditions.push(sql`exists (
+        select 1 from folder_hosting_clients fhc
+        where fhc.folder_id = ${folderId} and fhc.hosting_client_id = hosting_clients.id
+      )`);
     if (search) conditions.push(ilike(hostingClients.domain, `%${search}%`));
 
     const where = and(...conditions);

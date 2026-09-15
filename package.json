@@ -9,6 +9,7 @@
     "lint": "eslint",
     "migrate": "tsx scripts/migrate-notion.ts",
     "migrate:dry": "tsx scripts/migrate-notion.ts --dry-run",
+    "migrate:folders": "tsx scripts/migrate-folders.ts",
     "test:clean": "tsx scripts/cleanup-test-data.ts"
   },
   "dependencies": {

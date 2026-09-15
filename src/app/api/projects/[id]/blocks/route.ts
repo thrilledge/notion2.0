@@ -8,6 +8,8 @@ import { getAuthz, canEditProject } from "@/lib/authz";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 const spanSchema = z.object({
   text: z.string().max(5000),
   href: z.string().max(4000).nullable().optional(),
@@ -58,9 +60,15 @@ const updateSchema = z.object({
     .optional(),
 });
 
+const batchUpdateSchema = z.object({
+  updates: z.array(updateSchema).min(1).max(200),
+});
+
 const deleteSchema = z.object({
   blockIds: z.array(z.string().uuid()).min(1).max(100),
 });
+
+type UpdateInput = z.infer<typeof updateSchema>;
 
 export async function DELETE(request: Request, ctx: RouteContext) {
   const authz = await getAuthz();
@@ -237,6 +245,58 @@ export async function POST(request: Request, ctx: RouteContext) {
   }
 }
 
+async function applyUpdate(
+  tx: Tx,
+  projectId: string,
+  update: UpdateInput
+) {
+  const block = await tx
+    .select({
+      id: pageBlocks.id,
+      pageId: pageBlocks.pageId,
+      content: pageBlocks.content,
+      type: pageBlocks.type,
+    })
+    .from(pageBlocks)
+    .innerJoin(pages, eq(pages.id, pageBlocks.pageId))
+    .where(
+      and(
+        eq(pageBlocks.id, update.blockId),
+        eq(pages.parentId, projectId),
+        eq(pages.parentType, "project")
+      )
+    )
+    .limit(1);
+
+  if (!block[0]) return null;
+
+  const currentContent = (block[0].content ?? {}) as Record<string, unknown>;
+  const nextContent = { ...currentContent };
+  if (update.spans !== undefined) {
+    nextContent.spans = update.spans;
+    nextContent.text = update.spans.map((s) => s.text).join("");
+  } else if (update.text !== undefined) {
+    nextContent.text = update.text;
+    nextContent.spans = [{ text: update.text }];
+  }
+  if (update.checked !== undefined) {
+    nextContent.checked = update.checked;
+  }
+  const nextType = update.type ?? block[0].type;
+  if (nextType.startsWith("heading_")) {
+    nextContent.level = Number(nextType.slice(-1));
+  } else if (!nextType.startsWith("heading_")) {
+    delete nextContent.level;
+  }
+  const updated = await tx
+    .update(pageBlocks)
+    .set({ content: nextContent, ...(nextType !== block[0].type ? { type: nextType } : {}) })
+    .where(eq(pageBlocks.id, block[0].id))
+    .returning();
+
+  return updated[0] ?? null;
+}
+
 export async function PATCH(request: Request, ctx: RouteContext) {
   const authz = await getAuthz();
   if (!authz) {
@@ -250,6 +310,38 @@ export async function PATCH(request: Request, ctx: RouteContext) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  // Check for batch shape: { updates: [...] }
+  const hasBatchKey =
+    typeof body === "object" && body !== null && "updates" in body;
+  if (hasBatchKey) {
+    const parsed = batchUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request body", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+    try {
+      if (!(await canEditProject(authz, id))) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const results = await db.transaction(async (tx) => {
+        const out: (typeof pageBlocks.$inferSelect)[] = [];
+        for (const u of parsed.data.updates) {
+          const r = await applyUpdate(tx, id, u);
+          if (r) out.push(r);
+        }
+        return out;
+      });
+      return NextResponse.json({ data: results });
+    } catch (error) {
+      console.error("Failed to batch update blocks:", error);
+      return NextResponse.json({ error: "Failed to update blocks" }, { status: 500 });
+    }
+  }
+
+  // Single-block update (legacy shape)
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -259,58 +351,14 @@ export async function PATCH(request: Request, ctx: RouteContext) {
   }
 
   try {
-    // Verify this project is accessible and editable by the current user.
     if (!(await canEditProject(authz, id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-
-    // The block must live on a page that belongs to THIS project.
-    const block = await db
-      .select({
-        id: pageBlocks.id,
-        pageId: pageBlocks.pageId,
-        content: pageBlocks.content,
-        type: pageBlocks.type,
-      })
-      .from(pageBlocks)
-      .innerJoin(pages, eq(pages.id, pageBlocks.pageId))
-      .where(
-        and(
-          eq(pageBlocks.id, parsed.data.blockId),
-          eq(pages.parentId, id),
-          eq(pages.parentType, "project")
-        )
-      )
-      .limit(1);
-    if (!block[0]) {
+    const result = await db.transaction(async (tx) => applyUpdate(tx, id, parsed.data));
+    if (!result) {
       return NextResponse.json({ error: "Block not found" }, { status: 404 });
     }
-
-    const currentContent = (block[0].content ?? {}) as Record<string, unknown>;
-    const nextContent = { ...currentContent };
-    if (parsed.data.spans !== undefined) {
-      nextContent.spans = parsed.data.spans;
-      nextContent.text = parsed.data.spans.map((s) => s.text).join("");
-    } else if (parsed.data.text !== undefined) {
-      nextContent.text = parsed.data.text;
-      nextContent.spans = [{ text: parsed.data.text }];
-    }
-    if (parsed.data.checked !== undefined) {
-      nextContent.checked = parsed.data.checked;
-    }
-    const nextType = parsed.data.type ?? block[0].type;
-    if (nextType.startsWith("heading_")) {
-      nextContent.level = Number(nextType.slice(-1));
-    } else if (!nextType.startsWith("heading_")) {
-      delete nextContent.level;
-    }
-    const updated = await db
-      .update(pageBlocks)
-      .set({ content: nextContent, ...(nextType !== block[0].type ? { type: nextType } : {}) })
-      .where(eq(pageBlocks.id, block[0].id))
-      .returning();
-
-    return NextResponse.json({ data: updated[0] });
+    return NextResponse.json({ data: result });
   } catch (error) {
     console.error("Failed to update block:", error);
     return NextResponse.json(

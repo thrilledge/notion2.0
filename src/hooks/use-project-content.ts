@@ -121,30 +121,27 @@ export function useCreateBlock(projectId: string | undefined) {
   });
 }
 
-export function useUpdateBlock(projectId: string | undefined) {
+export function useBatchUpdateBlocks(projectId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
-      blockId,
-      text,
-      checked,
-      spans,
-      type,
+      updates,
     }: {
-      blockId: string;
-      text?: string;
-      checked?: boolean;
-      spans?: ProjectContentBlock["content"]["spans"];
-      type?: string;
+      updates: {
+        blockId: string;
+        spans?: ProjectContentBlock["content"]["spans"];
+        checked?: boolean;
+        type?: string;
+      }[];
     }) => {
       const res = await fetch(`/api/projects/${projectId}/blocks`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blockId, text, checked, spans, type }),
+        body: JSON.stringify({ updates }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? "Failed to update block");
+        throw new Error(json.error ?? "Failed to update blocks");
       }
       return res.json();
     },
@@ -156,18 +153,18 @@ export function useUpdateBlock(projectId: string | undefined) {
   });
 }
 
-export function useDeleteBlock(projectId: string | undefined) {
+export function useBatchDeleteBlocks(projectId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (blockId: string) => {
+    mutationFn: async (blockIds: string[]) => {
       const res = await fetch(`/api/projects/${projectId}/blocks`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blockIds: [blockId] }),
+        body: JSON.stringify({ blockIds }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? "Failed to delete block");
+        throw new Error(json.error ?? "Failed to delete blocks");
       }
       return res.json();
     },

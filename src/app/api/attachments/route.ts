@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { attachments, hostingClients, docs, meetings } from "@/lib/db/schema";
+import { attachments, hostingClients, docs, meetings, pages } from "@/lib/db/schema";
 import { storeLocalFile } from "@/lib/storage";
 import { isAllowedUpload, MAX_UPLOAD_BYTES } from "@/lib/security";
 import {
   getAuthz,
   getAccessibleProjectIds,
+  getAccessibleHostingClientIds,
   getAccessibleWorkspaceIds,
+  canViewHostingClient,
   canEditProject,
   canEditWorkspaceContent,
 } from "@/lib/authz";
@@ -70,28 +72,66 @@ export async function GET(request: Request) {
     const accessible = await (async () => {
       const projectIds = await getAccessibleProjectIds(authz);
       const projectSet = new Set(projectIds);
-      const workspaceIds = await getAccessibleWorkspaceIds(authz);
-      const workspaceSet = new Set(workspaceIds);
+      const hostingIds = await getAccessibleHostingClientIds(authz);
+      const hostingSet = new Set(hostingIds);
+      const workspaceSet = new Set(await getAccessibleWorkspaceIds(authz));
 
       if (parsed.data.projectId) {
         if (!projectSet.has(parsed.data.projectId)) return [];
         return rows.filter((r) => r.projectId === parsed.data.projectId);
       }
 
-      if (parsed.data.hostingClientId || parsed.data.pageId) {
-        const containerIds = [
-          parsed.data.hostingClientId,
-          parsed.data.pageId,
-        ].filter((v): v is string => !!v);
-        const ws = await resolveWorkspaceIds(containerIds);
-        if (ws.length === 0 || !ws.every((w) => workspaceSet.has(w))) return [];
-
-        const containerSet = new Set(containerIds);
+      if (parsed.data.hostingClientId) {
+        if (!hostingSet.has(parsed.data.hostingClientId)) return [];
         return rows.filter(
-          (r) =>
-            (r.hostingClientId && containerSet.has(r.hostingClientId)) ||
-            (r.pageId && containerSet.has(r.pageId))
+          (r) => r.hostingClientId === parsed.data.hostingClientId
         );
+      }
+
+      if (parsed.data.pageId) {
+        const [page] = await db
+          .select({ parentType: pages.parentType, parentId: pages.parentId })
+          .from(pages)
+          .where(eq(pages.id, parsed.data.pageId))
+          .limit(1);
+        let allowed = true;
+        if (page) {
+          if (page.parentType === "project") {
+            allowed = !!page.parentId && projectSet.has(page.parentId);
+          } else if (page.parentType === "hosting_client") {
+            allowed = !!page.parentId && hostingSet.has(page.parentId);
+          } else {
+            allowed = workspaceSet.size > 0;
+          }
+        }
+        if (!allowed) return [];
+        return rows.filter((r) => r.pageId === parsed.data.pageId);
+      }
+
+      const pageIds = new Set(
+        rows
+          .map((r) => r.pageId)
+          .filter((id): id is string => !!id)
+      );
+      const pageSet = new Set<string>();
+      if (pageIds.size > 0) {
+        const pageRows = await db
+          .select({
+            id: pages.id,
+            parentType: pages.parentType,
+            parentId: pages.parentId,
+          })
+          .from(pages)
+          .where(inArray(pages.id, [...pageIds]));
+        for (const p of pageRows) {
+          if (p.parentType === "project") {
+            if (p.parentId && projectSet.has(p.parentId)) pageSet.add(p.id);
+          } else if (p.parentType === "hosting_client") {
+            if (p.parentId && hostingSet.has(p.parentId)) pageSet.add(p.id);
+          } else if (workspaceSet.size > 0) {
+            pageSet.add(p.id);
+          }
+        }
       }
 
       const ownUploads = authz.isGlobalOwner
@@ -101,7 +141,8 @@ export async function GET(request: Request) {
         (r) =>
           ownUploads(r) ||
           (r.projectId != null && projectSet.has(r.projectId)) ||
-          (r.projectId == null && (r.hostingClientId != null || r.pageId != null))
+          (r.hostingClientId != null && hostingSet.has(r.hostingClientId)) ||
+          (r.pageId != null && pageSet.has(r.pageId))
       );
     })();
 
@@ -169,6 +210,26 @@ export async function POST(request: Request) {
     const ws = await resolveWorkspaceIds(containerIds);
     if (ws.length === 0 || !ws.every((w) => canEditWorkspaceContent(authz, w))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (
+      parsed.data.hostingClientId &&
+      !(await canViewHostingClient(authz, parsed.data.hostingClientId))
+    ) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (parsed.data.pageId) {
+      const [page] = await db
+        .select({ parentType: pages.parentType, parentId: pages.parentId })
+        .from(pages)
+        .where(eq(pages.id, parsed.data.pageId))
+        .limit(1);
+      if (
+        page?.parentType === "hosting_client" &&
+        (!page.parentId ||
+          !(await canViewHostingClient(authz, page.parentId)))
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
   }
 

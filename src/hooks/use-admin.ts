@@ -56,6 +56,21 @@ export type CurrentUser = {
   roles: Record<string, "owner" | "member">;
 };
 
+export type FolderRow = {
+  id: string;
+  name: string;
+  kind: "project" | "hosting_client";
+  code: string | null;
+};
+
+export type FolderAccessUser = {
+  id: string;
+  email: string | null;
+  fullName: string | null;
+  avatarUrl: string | null;
+  grantedFolderIds: string[];
+};
+
 export function useCurrentUser() {
   return useQuery({
     queryKey: ["me"],
@@ -328,5 +343,139 @@ export function useSetAssignments(workspaceId: string) {
       qc.invalidateQueries({
         queryKey: ["assignments", workspaceId],
       }),
+  });
+}
+
+export function useFolderAccess(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ["folder-access", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/folder-access?workspaceId=${workspaceId}`, {
+        cache: "no-store",
+      });
+      const json = await j<{
+        data: { folders: FolderRow[]; users: FolderAccessUser[] };
+      }>(res);
+      return json.data;
+    },
+  });
+}
+
+export function useSetFolderAccess(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      userId,
+      folderIds,
+    }: {
+      userId: string;
+      folderIds: string[];
+    }) => {
+      const res = await fetch("/api/admin/folder-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId, userId, folderIds }),
+      });
+      return j(res);
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["folder-access", workspaceId] }),
+  });
+}
+
+export type WorkspaceFolderRow = FolderRow & {
+  projectIds: string[];
+  hostingClientIds: string[];
+};
+
+export function useFolders(workspaceId: string | null) {
+  return useQuery({
+    queryKey: ["folders", workspaceId],
+    enabled: !!workspaceId,
+    queryFn: async () => {
+      const res = await fetch(`/api/folders?workspaceId=${workspaceId}`, {
+        cache: "no-store",
+      });
+      const json = await j<{ data: WorkspaceFolderRow[] }>(res);
+      return json.data;
+    },
+  });
+}
+
+export function useCreateFolder(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      name,
+      kind,
+      projectIds,
+      hostingClientIds,
+    }: {
+      name: string;
+      kind: "project" | "hosting_client";
+      projectIds?: string[];
+      hostingClientIds?: string[];
+    }) => {
+      const res = await fetch("/api/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          name,
+          kind,
+          projectIds: projectIds ?? [],
+          hostingClientIds: hostingClientIds ?? [],
+        }),
+      });
+      return j(res);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["folders", workspaceId] });
+    },
+  });
+}
+
+export function useUpdateFolder(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      folderId,
+      name,
+      projectIds,
+      hostingClientIds,
+    }: {
+      folderId: string;
+      name?: string;
+      projectIds?: string[];
+      hostingClientIds?: string[];
+    }) => {
+      const res = await fetch("/api/folders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId, name, projectIds, hostingClientIds }),
+      });
+      return j(res);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["folders", workspaceId] });
+    },
+  });
+}
+
+export function useDeleteFolder(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (folderId: string) => {
+      const res = await fetch("/api/folders", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId }),
+      });
+      return j(res);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["folders", workspaceId] });
+    },
   });
 }

@@ -23,6 +23,8 @@ interface ListParams {
   status?: string;
   result?: string;
   assigneeId?: string;
+  folderId?: string;
+  workspaceId?: string;
   search?: string;
   limit?: number;
   offset?: number;

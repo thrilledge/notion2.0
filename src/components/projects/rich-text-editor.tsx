@@ -30,8 +30,8 @@ import {
 import type { ProjectContentBlock } from "@/hooks/use-project-content";
 import {
   useCreateBlocks,
-  useUpdateBlock,
-  useDeleteBlock,
+  useBatchUpdateBlocks,
+  useBatchDeleteBlocks,
 } from "@/hooks/use-project-content";
 import { sanitizeUrl } from "@/lib/security";
 import { Button } from "@/components/ui/button";
@@ -296,11 +296,14 @@ export function RichTextEditor({
   blocks: ProjectContentBlock[];
 }) {
   const createBlocks = useCreateBlocks(projectId);
-  const updateBlock = useUpdateBlock(projectId);
-  const deleteBlock = useDeleteBlock(projectId);
+  const batchUpdate = useBatchUpdateBlocks(projectId);
+  const batchDelete = useBatchDeleteBlocks(projectId);
 
   const baselineRef = useRef<Row[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+  const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedCountRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Serialize save passes: while a pass (creates + updates) is still landing,
@@ -308,6 +311,9 @@ export function RichTextEditor({
   // have been mapped back to their real DB ids.
   const savingRef = useRef(false);
   const pendingEditorRef = useRef<Editor | null>(null);
+  // When a save pass partially fails, remember the editor to retry so the
+  // user can recover the changes that were NOT persisted.
+  const retryEditorRef = useRef<Editor | null>(null);
 
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
@@ -341,7 +347,7 @@ export function RichTextEditor({
     () => ({
       attributes: {
         class:
-          "tiptap min-h-[50rem] w-full text-sm leading-relaxed text-foreground",
+          "tiptap min-h-[50 rem] w-full text-sm leading-relaxed text-foreground",
       },
       handleKeyDown(_view: unknown, event: KeyboardEvent) {
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -359,16 +365,20 @@ export function RichTextEditor({
 
   persistRef.current = (editor: Editor) => {
       if (savingRef.current) {
-        // A save pass is in flight — remember the latest editor state and
-        // run it once the current pass finishes (so created rows get their
-        // real DB ids before the next diff is computed).
         pendingEditorRef.current = editor;
         return;
       }
       savingRef.current = true;
+      setSaveError(null);
+      setJustSaved(false);
+      if (justSavedTimerRef.current) {
+        clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = null;
+      }
 
+      const prevBaseline = baselineRef.current;
       const fresh = docToRows(editor.getJSON());
-      const merged = mergeWithBaseline(baselineRef.current, fresh);
+      const merged = mergeWithBaseline(prevBaseline, fresh);
 
       const creates: Row[] = [];
       const updates: { id: string; row: Row }[] = [];
@@ -376,7 +386,7 @@ export function RichTextEditor({
 
       for (let ix = 0; ix < merged.length; ix += 1) {
         const row = merged[ix];
-        const old = baselineRef.current[ix];
+        const old = prevBaseline[ix];
         const equiv =
           old &&
           old.id === row.id &&
@@ -389,8 +399,8 @@ export function RichTextEditor({
           updates.push({ id: old.id, row });
         }
       }
-      for (let ix = merged.length; ix < baselineRef.current.length; ix += 1) {
-        const gone = baselineRef.current[ix];
+      for (let ix = merged.length; ix < prevBaseline.length; ix += 1) {
+        const gone = prevBaseline[ix];
         if (isEditableType(gone.type)) deletes.push(gone.id);
       }
 
@@ -406,29 +416,66 @@ export function RichTextEditor({
       }
 
       const totalOps =
-        (creates.length > 0 ? 1 : 0) + updates.length + deletes.length;
+        (creates.length > 0 ? 1 : 0) +
+        (updates.length > 0 ? 1 : 0) +
+        (deletes.length > 0 ? 1 : 0);
       savedCountRef.current = 0;
+      let failed = false;
+      // Creates that actually landed in the DB, so a retry after a partial
+      // failure won't duplicate them.
+      const landedCreates: { clientKey: string; realId: string }[] = [];
 
       const markDone = () => {
         savedCountRef.current += 1;
         if (savedCountRef.current >= totalOps) {
           setSaving(false);
           savingRef.current = false;
-          if (pendingEditorRef.current) {
-            const next = pendingEditorRef.current;
+          if (failed) {
+            // Recover: keep whatever actually hit the DB (successful creates)
+            // so the retry only re-sends what was lost. Failed updates/deletes
+            // still differ from the editor, so they are re-sent on retry.
+            const landed = landedCreates.filter((lc) =>
+              merged.some((r) => r.id === lc.clientKey)
+            );
+            let recovered = [...prevBaseline];
+            for (const lc of [...landed]
+              .sort((a, b) => {
+                const ai = merged.findIndex((r) => r.id === a.clientKey);
+                const bi = merged.findIndex((r) => r.id === b.clientKey);
+                return bi - ai;
+              })) {
+              const at = merged.findIndex((r) => r.id === lc.clientKey);
+              const row = merged[at];
+              if (row) recovered.splice(Math.min(at, recovered.length), 0, { ...row, id: lc.realId });
+            }
+            baselineRef.current = recovered;
+            retryEditorRef.current = pendingEditorRef.current ?? editor;
             pendingEditorRef.current = null;
-            persistRef.current(next);
+            setSaveError("Saving failed");
+          } else {
+            baselineRef.current = merged.map((r) => {
+              const match = landedCreates.find((lc) => lc.clientKey === r.id);
+              return match ? { ...r, id: match.realId } : r;
+            });
+            retryEditorRef.current = null;
+            if (pendingEditorRef.current) {
+              const next = pendingEditorRef.current;
+              pendingEditorRef.current = null;
+              persistRef.current(next);
+            } else {
+              setJustSaved(true);
+              justSavedTimerRef.current = setTimeout(() => {
+                setJustSaved(false);
+                justSavedTimerRef.current = null;
+              }, 1600);
+            }
           }
         }
       };
 
       setSaving(true);
-      baselineRef.current = merged;
 
       if (creates.length > 0) {
-        // Batched, transactional create: one request for every new line so
-        // positions can't race on max+1 and rows can't be dropped. The server
-        // echoes the client row key back with the real DB id.
         createBlocks.mutate(
           {
             blocks: creates.map((row) => ({
@@ -443,32 +490,59 @@ export function RichTextEditor({
                 | { id: string; clientKey?: string }[]
                 | undefined;
               if (rows?.length) {
-                baselineRef.current = baselineRef.current.map((r) => {
-                  const match = rows.find(
-                    (row) => row.clientKey === r.id
-                  );
-                  return match ? { ...r, id: match.id } : r;
-                });
+                for (const row of rows) {
+                  if (row.clientKey) {
+                    landedCreates.push({
+                      clientKey: row.clientKey,
+                      realId: row.id,
+                    });
+                  }
+                }
               }
+            },
+            onError: () => {
+              failed = true;
             },
             onSettled: markDone,
           }
         );
       }
-      for (const { id, row } of updates) {
-        updateBlock.mutate(
+
+      if (updates.length > 0) {
+        batchUpdate.mutate(
           {
-            blockId: id,
-            spans: row.spans,
-            checked: row.type === "to_do" ? row.checked : undefined,
-            type: row.type,
+            updates: updates.map(({ id, row }) => ({
+              blockId: id,
+              spans: row.spans,
+              checked: row.type === "to_do" ? row.checked : undefined,
+              type: row.type,
+            })),
           },
-          { onSettled: markDone }
+          {
+            onError: () => {
+              failed = true;
+            },
+            onSettled: markDone,
+          }
         );
       }
-      for (const id of deletes) {
-        deleteBlock.mutate(id, { onSettled: markDone });
+
+      if (deletes.length > 0) {
+        batchDelete.mutate(deletes, {
+          onError: () => {
+            failed = true;
+          },
+          onSettled: markDone,
+        });
       }
+  };
+
+  const retrySave = () => {
+    const target = retryEditorRef.current;
+    if (target) {
+      retryEditorRef.current = null;
+      persistRef.current(target);
+    }
   };
 
   useEffect(() => {
@@ -477,6 +551,7 @@ export function RichTextEditor({
 
   useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current);
+    if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
   }, []);
 
   const editorRef = useRef<Editor | null>(null);
@@ -488,7 +563,7 @@ export function RichTextEditor({
     content: initialDoc,
     onUpdate: ({ editor: ed }) => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => persistRef.current(ed), 600);
+      timerRef.current = setTimeout(() => persistRef.current(ed), 300);
     },
   });
 
@@ -549,11 +624,27 @@ export function RichTextEditor({
 
   return (
     <div className="relative" data-rich-text-editor>
-      {saving && (
+      {saveError ? (
+        <div className="mb-1 flex items-center gap-1.5 text-xs text-destructive">
+          <X className="size-3" />
+          {saveError} — your changes are safe in this editor until saved
+          <button
+            type="button"
+            onClick={retrySave}
+            className="ml-1 rounded border border-input px-1.5 py-0.5 text-xs font-medium underline-offset-2 hover:bg-accent hover:text-accent-foreground"
+          >
+            Retry
+          </button>
+        </div>
+      ) : saving ? (
         <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
           <Loader2 className="size-3 animate-spin" /> Saving...
         </div>
-      )}
+      ) : justSaved ? (
+        <div className="mb-1 flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+          <Check className="size-3" /> Saved
+        </div>
+      ) : null}
 
       <div className="mb-1.5 flex flex-wrap items-center gap-0.5 rounded-md border bg-card p-1 shadow-sm">
         <select

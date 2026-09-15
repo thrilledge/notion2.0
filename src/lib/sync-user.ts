@@ -12,6 +12,7 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { grantAllFolders } from "@/lib/authz";
 
 interface AuthUserLike {
   id: string;
@@ -170,6 +171,11 @@ async function claimInvitationsForUser(userId: string, email: string): Promise<v
         }))
       )
       .onConflictDoNothing();
+
+    // New members can see the current folders until the owner narrows access.
+    for (const wid of workspaceIds) {
+      await grantAllFolders(wid, userId);
+    }
 
     // Notify the new member about each workspace they joined.
     const wsRows = await db

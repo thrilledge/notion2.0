@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   ArrowLeft,
@@ -204,6 +204,19 @@ export function ProjectDetail({
       : ""
   );
 
+  const editedRef = useRef(false);
+
+  useEffect(() => {
+    const p = live.data;
+    if (!p || editedRef.current) return;
+    setName(p.name);
+    setSummary(p.summary ?? "");
+    setComments(p.comments ?? "");
+    setDueDate(
+      p.dueDate ? toInputDate(new Date(p.dueDate)) : ""
+    );
+  }, [live.data]);
+
   const fileInputRef =
     useRef<HTMLInputElement>(null);
 
@@ -232,6 +245,7 @@ export function ProjectDetail({
       },
       {
         onSuccess: () => {
+          editedRef.current = false;
           if (opts?.toastMsg) {
             toast.success(opts.toastMsg);
           }
@@ -255,10 +269,11 @@ export function ProjectDetail({
   ) => {
     const trimmed = value.trim();
 
+    const p = live.data;
     const current =
       field === "summary"
-        ? project.summary ?? ""
-        : project.comments ?? "";
+        ? (p?.summary ?? project.summary ?? "")
+        : (p?.comments ?? project.comments ?? "");
 
     if (trimmed === current) return;
 
@@ -375,15 +390,16 @@ export function ProjectDetail({
 
           <input
             value={name}
-            onChange={(e) =>
-              setName(e.target.value)
-            }
+            onChange={(e) => {
+              editedRef.current = true;
+              setName(e.target.value);
+            }}
             onBlur={() => {
               const trimmed = name.trim();
 
               if (
                 trimmed &&
-                trimmed !== project.name
+                trimmed !== (live.data?.name ?? project.name)
               ) {
                 saveField(
                   {
@@ -521,6 +537,7 @@ export function ProjectDetail({
                 type="date"
                 value={dueDate}
                 onChange={(e) => {
+                  editedRef.current = true;
                   setDueDate(e.target.value);
 
                   saveField({
@@ -844,9 +861,10 @@ export function ProjectDetail({
 
               <textarea
                 value={summary}
-                onChange={(e) =>
-                  setSummary(e.target.value)
-                }
+                onChange={(e) => {
+                  editedRef.current = true;
+                  setSummary(e.target.value);
+                }}
                 onBlur={() =>
                   saveText(
                     "summary",
@@ -1083,9 +1101,10 @@ export function ProjectDetail({
 
               <textarea
                 value={comments}
-                onChange={(e) =>
-                  setComments(e.target.value)
-                }
+                onChange={(e) => {
+                  editedRef.current = true;
+                  setComments(e.target.value);
+                }}
                 onBlur={() =>
                   saveText(
                     "comments",
