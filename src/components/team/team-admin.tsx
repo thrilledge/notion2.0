@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Cloud,
   UserPlus,
@@ -10,7 +10,11 @@ import {
   Building2,
   Clock,
   X,
+  Folder,
+  FolderPlus,
+  Pencil,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -35,6 +39,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
@@ -47,11 +54,18 @@ import {
   useSetRole,
   useRemoveMember,
   useCreateWorkspace,
-  useAssignments,
-  useSetAssignments,
+  useFolderAccess,
+  useSetFolderAccess,
+  useFolders,
+  useCreateFolder,
+  useUpdateFolder,
+  useDeleteFolder,
   type WorkspaceMemberRow,
   type WorkspaceInvitation,
+  type FolderRow,
 } from "@/hooks/use-admin";
+import { useProjects } from "@/hooks/use-projects";
+import { useHostingClients } from "@/hooks/use-hosting";
 
 function initials(name: string | null) {
   if (!name) return "?";
@@ -67,11 +81,6 @@ const roleBadge: Record<string, string> = {
   owner: "bg-red-500/15 text-red-600 dark:text-red-400",
   member: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
 };
-
-const TEAM_PROJECT_FOLDERS = [
-  { key: "client", label: "All Projects" },
-  { key: "side_project", label: "Side Projects" },
-];
 
 export function TeamAdmin() {
   const [workspaceId, setWorkspaceId] = useState<string>("");
@@ -104,7 +113,8 @@ export function TeamAdmin() {
       {selectedId ? (
         <div className="grid gap-6 lg:grid-cols-2">
           <MembersPanel workspaceId={selectedId} />
-          <AssignmentsPanel workspaceId={selectedId} />
+          <FolderAccessPanel workspaceId={selectedId} />
+          <FoldersPanel workspaceId={selectedId} />
         </div>
       ) : (
         <div className="rounded-md border p-6 text-center text-muted-foreground">
@@ -236,7 +246,7 @@ function PendingInvites({ workspaceId }: { workspaceId: string }) {
       </ul>
       <p className="px-3 py-2 text-xs text-muted-foreground">
         Invited people are added as members automatically once they create an
-        account. They become assignable at that point.
+        account. They become grantable at that point.
       </p>
     </div>
   );
@@ -421,73 +431,40 @@ function AddMember({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
-  const { data, isLoading, isError } = useAssignments(workspaceId);
-  const setAssignments = useSetAssignments(workspaceId);
+function FolderAccessPanel({ workspaceId }: { workspaceId: string }) {
+  const { data, isLoading, isError } = useFolderAccess(workspaceId);
+  const setFolderAccess = useSetFolderAccess(workspaceId);
 
-  const projects = useMemo(() => data?.projects ?? [], [data]);
-  const users = useMemo(() => data?.users ?? [], [data]);
+  const folders = data?.folders ?? [];
+  const users = data?.users ?? [];
 
   const [selectedUserId, setSelectedUserId] = useState<string>("");
-  // Per-user draft selection, keeps each user's pending state independently.
   const [drafts, setDrafts] = useState<Record<string, Set<string>>>({});
   const [dirtyUserId, setDirtyUserId] = useState<string>("");
 
   const activeUser = users.find((u) => u.id === selectedUserId) ?? users[0];
 
-  // Effective selection for a user: draft if present, else their real assignees.
-  const selectionFrom = (
-    userId: string,
-    draftsMap: Record<string, Set<string>>
-  ) => {
-    const existing = draftsMap[userId];
-    if (existing) return existing;
-    return new Set(
-      projects
-        .filter((p) => p.assigneeIds.includes(userId))
-        .map((p) => p.id)
+  const selectionFor = (userId: string) => {
+    return (
+      drafts[userId] ??
+      new Set(
+        users.find((u) => u.id === userId)?.grantedFolderIds ?? []
+      )
     );
   };
 
-  const selectionFor = (userId: string) => selectionFrom(userId, drafts);
-
-  const activeSelection = activeUser ? selectionFor(activeUser.id) : new Set<string>();
+  const activeSelection = activeUser
+    ? selectionFor(activeUser.id)
+    : new Set<string>();
   const isDirty = activeUser?.id != null && dirtyUserId === activeUser.id;
 
-  const applyFor = (
-    userId: string,
-    compute: (current: Set<string>) => Set<string>
-  ) => {
-    setDrafts((prev) => {
-      const current = selectionFrom(userId, prev);
-      return { ...prev, [userId]: compute(current) };
-    });
-    setDirtyUserId(userId);
-  };
-
-  const toggleFolder = (key: string) => {
+  const toggleFolder = (folderId: string) => {
     if (!activeUser) return;
-    const ids = projects.filter((p) => p.type === key).map((p) => p.id);
-    if (ids.length === 0) return;
-    applyFor(activeUser.id, (current) => {
-      const next = new Set(current);
-      const allSelected = ids.every((id) => current.has(id));
-      for (const id of ids) {
-        if (allSelected) next.delete(id);
-        else next.add(id);
-      }
-      return next;
-    });
-  };
-
-  const selectAll = () => {
-    if (!activeUser) return;
-    applyFor(activeUser.id, () => new Set(projects.map((p) => p.id)));
-  };
-
-  const clearAll = () => {
-    if (!activeUser) return;
-    applyFor(activeUser.id, () => new Set());
+    const next = new Set(selectionFor(activeUser.id));
+    if (next.has(folderId)) next.delete(folderId);
+    else next.add(folderId);
+    setDrafts((prev) => ({ ...prev, [activeUser.id]: next }));
+    setDirtyUserId(activeUser.id);
   };
 
   if (isLoading)
@@ -502,7 +479,7 @@ function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
     return (
       <Card>
         <CardContent className="p-6 text-sm text-destructive">
-          Failed to load assignments.
+          Failed to load folder access.
         </CardContent>
       </Card>
     );
@@ -511,9 +488,13 @@ function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
     <Card>
       <CardHeader className="space-y-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">Project Assignments</CardTitle>
+          <CardTitle className="text-base">Folder Access</CardTitle>
           <Cloud className="size-4 text-muted-foreground" />
         </div>
+        <p className="text-xs text-muted-foreground">
+          Grant folders to each member. Owners always see everything; members
+          only see the folders you grant here.
+        </p>
         <Select
           value={activeUser?.id ?? ""}
           onValueChange={(v) => setSelectedUserId(v)}
@@ -531,100 +512,403 @@ function AssignmentsPanel({ workspaceId }: { workspaceId: string }) {
         </Select>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">
-            {activeSelection.size} of {projects.length} projects assigned
-          </span>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!activeUser || projects.length === 0}
-              onClick={selectAll}
-            >
-              Select all
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!activeUser || projects.length === 0}
-              onClick={clearAll}
-            >
-              Clear all
-            </Button>
-          </div>
-        </div>
-        <div className="space-y-1">
-          {TEAM_PROJECT_FOLDERS.map((folder) => {
-            const ids = projects
-              .filter((p) => p.type === folder.key)
-              .map((p) => p.id);
-            if (ids.length === 0) return null;
-            const count = ids.filter((id) => activeSelection.has(id)).length;
-            return (
-              <button
-                type="button"
-                key={folder.key}
-                onClick={() => toggleFolder(folder.key)}
-                className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${
-                  count === ids.length && ids.length > 0
-                    ? "border-primary/40 bg-primary/5"
-                    : ""
-                }`}
-              >
-                <span className="font-medium">{folder.label}</span>
-                <Badge
-                  variant="secondary"
-                  className={count === ids.length ? "bg-primary/10 text-primary" : ""}
-                >
-                  {count === ids.length
-                    ? "All selected"
-                    : count > 0
-                      ? `${count} of ${ids.length}`
-                      : "None"}
-                </Badge>
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center justify-between border-t pt-3">
-          <span className="text-xs text-muted-foreground">
-            {activeUser?.fullName ?? activeUser?.email} · {activeSelection.size}{" "}
-            assigned
-          </span>
-          <Button
-            disabled={!activeUser || setAssignments.isPending || !isDirty}
-            onClick={() =>
-              activeUser &&
-              setAssignments.mutate(
-                {
-                  userId: activeUser.id,
-                  projectIds: Array.from(activeSelection),
-                },
-                {
-                  onSuccess: () => {
-                    setDirtyUserId("");
-                    setDrafts((prev) => {
-                      const next = { ...prev };
-                      delete next[activeUser.id];
-                      return next;
-                    });
-                  },
+        {activeUser && (
+          <>
+            <div className="space-y-1">
+              {folders.length === 0 && (
+                <p className="py-4 text-center text-sm text-muted-foreground">
+                  No folders in this workspace yet.
+                </p>
+              )}
+              {folders.map((folder) => {
+                const granted = activeSelection.has(folder.id);
+                return (
+                  <button
+                    type="button"
+                    key={folder.id}
+                    onClick={() => toggleFolder(folder.id)}
+                    className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${
+                      granted ? "border-primary/40 bg-primary/5" : ""
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 font-medium">
+                      <Folder className="size-4 text-muted-foreground" />
+                      {folder.name}
+                      {folder.code && (
+                        <Badge variant="outline" className="text-[10px]">
+                          system
+                        </Badge>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {granted ? "Granted" : "Hidden"}
+                      <span>{granted ? "✓" : "—"}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between border-t pt-3">
+              <span className="text-xs text-muted-foreground">
+                {activeUser.fullName ?? activeUser.email} ·{" "}
+                {activeSelection.size} of {folders.length} folders granted
+              </span>
+              <Button
+                disabled={!activeUser || setFolderAccess.isPending || !isDirty}
+                onClick={() =>
+                  activeUser &&
+                  setFolderAccess.mutate(
+                    {
+                      userId: activeUser.id,
+                      folderIds: Array.from(activeSelection),
+                    },
+                    {
+                      onSuccess: () => {
+                        setDirtyUserId("");
+                        setDrafts((prev) => {
+                          const next = { ...prev };
+                          delete next[activeUser.id];
+                          return next;
+                        });
+                        toast.success("Folder access updated");
+                      },
+                    }
+                  )
                 }
-              )
-            }
-          >
-            {setAssignments.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            Save
-          </Button>
-        </div>
+              >
+                {setFolderAccess.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                Save
+              </Button>
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+function FoldersPanel({ workspaceId }: { workspaceId: string }) {
+  const { data, isLoading, isError } = useFolders(workspaceId);
+  const createFolder = useCreateFolder(workspaceId);
+  const updateFolder = useUpdateFolder(workspaceId);
+  const deleteFolder = useDeleteFolder(workspaceId);
+
+  const folders = data ?? [];
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<FolderRow | null>(null);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">Folders</CardTitle>
+        <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+          <FolderPlus className="size-4" /> New Folder
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Custom folders group projects or hosting clients and appear in the
+          sidebar for everyone you grant access to.
+        </p>
+        {isLoading && <Skeleton className="h-32 w-full" />}
+        {isError && (
+          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            Failed to load folders.
+          </div>
+        )}
+        {!isLoading && !isError && (
+          <div className="space-y-1">
+            {folders.length === 0 && (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                No folders yet. Create one to start grouping projects.
+              </p>
+            )}
+            {folders.map((folder) => (
+              <FolderRowItem
+                key={folder.id}
+                folder={folder}
+                isSystem={!!folder.code}
+                onEdit={() => setEditing(folder)}
+                onDelete={() => {
+                  if (
+                    window.confirm(
+                      `Delete folder "${folder.name}"? Projects inside it are not deleted.`
+                    )
+                  ) {
+                    deleteFolder.mutate(folder.id, {
+                      onSuccess: () => toast.success("Folder deleted"),
+                    });
+                  }
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </CardContent>
+
+      {creating && (
+        <FolderDialog
+          workspaceId={workspaceId}
+          open={creating}
+          onOpenChange={(o) => !o && setCreating(false)}
+          mode="create"
+          createFolder={createFolder}
+        />
+      )}
+      {editing && (
+        <FolderDialog
+          workspaceId={workspaceId}
+          open={!!editing}
+          onOpenChange={(o) => !o && setEditing(null)}
+          mode="edit"
+          folder={editing}
+          updateFolder={updateFolder}
+        />
+      )}
+    </Card>
+  );
+}
+
+function FolderRowItem({
+  folder,
+  isSystem,
+  onEdit,
+  onDelete,
+}: {
+  folder: { id: string; name: string; kind: string; code: string | null };
+  isSystem: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-md border px-3 py-2">
+      <div className="flex items-center gap-2">
+        <Folder className="size-4 text-muted-foreground" />
+        <span className="text-sm font-medium">{folder.name}</span>
+        {isSystem && (
+          <Badge variant="outline" className="text-[10px]">
+            system
+          </Badge>
+        )}
+        <Badge variant="secondary" className="text-[10px]">
+          {folder.kind === "project" ? "projects" : "hosting clients"}
+        </Badge>
+      </div>
+      {!isSystem && (
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" title="Edit" onClick={onEdit}>
+            <Pencil className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            title="Delete"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={onDelete}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FolderDialog({
+  workspaceId,
+  open,
+  onOpenChange,
+  mode,
+  folder,
+  createFolder,
+  updateFolder,
+}: {
+  workspaceId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  mode: "create" | "edit";
+  folder?: FolderRow;
+  createFolder?: ReturnType<typeof useCreateFolder>;
+  updateFolder?: ReturnType<typeof useUpdateFolder>;
+}) {
+  const isEdit = mode === "edit";
+  const [name, setName] = useState(folder?.name ?? "");
+  const [kind, setKind] = useState<"project" | "hosting_client">(
+    (folder?.kind as "project" | "hosting_client") ?? "project"
+  );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const projects = useProjects(
+    isEdit && folder?.kind === "project"
+      ? { workspaceId, limit: 1000 }
+      : undefined
+  );
+  const hosting = useHostingClients(
+    isEdit && folder?.kind === "hosting_client"
+      ? { workspaceId, limit: 100 }
+      : undefined
+  );
+
+  // For edit mode, load the folder's current members to pre-check them.
+  const { data: folderData } = useFolders(isEdit ? workspaceId : null);
+  const currentRow = folderData?.find((f) => f.id === folder?.id);
+
+  // Initialize the selection from the folder's current members once loaded.
+  useEffect(() => {
+    if (!isEdit || !currentRow) return;
+    setSelected(
+      new Set(
+        folder?.kind === "hosting_client"
+          ? currentRow.hostingClientIds
+          : currentRow.projectIds
+      )
+    );
+  }, [isEdit, currentRow, folder?.kind]);
+
+  const isProjectKind = kind === "project";
+  const candidates = isProjectKind
+    ? (projects.data?.data ?? [])
+    : (hosting.data?.data ?? []);
+
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+
+  const submit = () => {
+    if (!name.trim()) return;
+    const members = isProjectKind
+      ? { projectIds: Array.from(selected) }
+      : { hostingClientIds: Array.from(selected) };
+    if (isEdit && folder && updateFolder) {
+      updateFolder.mutate(
+        { folderId: folder.id, name: name.trim(), ...members },
+        {
+          onSuccess: () => {
+            toast.success("Folder updated");
+            onOpenChange(false);
+          },
+          onError: (e) => toast.error(e.message),
+        }
+      );
+    } else if (createFolder) {
+      createFolder.mutate(
+        { name: name.trim(), kind, ...members },
+        {
+          onSuccess: () => {
+            toast.success("Folder created");
+            onOpenChange(false);
+          },
+          onError: (e) => toast.error(e.message),
+        }
+      );
+    }
+  };
+
+  const pending = (createFolder ?? updateFolder)?.isPending ?? false;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit ? `Edit folder "${folder?.name}"` : "New folder"}
+          </DialogTitle>
+          <DialogDescription>
+            {isEdit && folder?.code
+              ? "System folders cannot be edited."
+              : "Custom folders can hold any projects or hosting clients from this workspace."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Folder name</label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Design Projects"
+            />
+          </div>
+
+          {!isEdit && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Contains</label>
+              <Select
+                value={kind}
+                onValueChange={(v) => setKind(v as "project" | "hosting_client")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="project">Projects</SelectItem>
+                  <SelectItem value="hosting_client">Hosting clients</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {isEdit && folder?.code && null}
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">
+              {isProjectKind ? "Projects" : "Hosting clients"}
+            </label>
+            <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+              {candidates.length === 0 && (
+                <p className="py-3 text-center text-xs text-muted-foreground">
+                  No {isProjectKind ? "projects" : "hosting clients"} in this
+                  workspace.
+                </p>
+              )}
+              {candidates.map((item) => {
+                const id = (item as { id: string }).id;
+                const label = isProjectKind
+                  ? (item as { name: string }).name
+                  : (item as { domain: string }).domain;
+                const isIncluded = selected.has(id);
+                return (
+                  <button
+                    type="button"
+                    key={id}
+                    onClick={() => toggle(id)}
+                    className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted ${
+                      isIncluded ? "bg-primary/5" : ""
+                    }`}
+                  >
+                    <span>{label}</span>
+                    <span>{isIncluded ? "✓" : "—"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!name.trim() || pending} onClick={submit}>
+            {pending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : isEdit ? (
+              <>
+                <Save className="size-4" /> Save
+              </>
+            ) : (
+              <>
+                <FolderPlus className="size-4" /> Create
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

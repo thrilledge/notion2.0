@@ -22,6 +22,7 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const KEEP_EMAILS = new Set([
   "owner@test.local",
   "member@test.local",
+  "folderqamember@test.local",
 ]);
 
 async function cleanupDb(): Promise<void> {
@@ -53,6 +54,16 @@ async function cleanupDb(): Promise<void> {
     await sql`delete from pages where parent_id = any(${ids}) and parent_type = 'hosting_client'`;
     await sql`delete from hosting_clients where id = any(${ids})`;
     console.log(`  Deleted ${qaHosting.length} QA_* hosting clients`);
+  }
+
+  // QA_* folders (cascade removes folder_access, folder_projects,
+  // folder_hosting_clients rows). Run before workspace deletion so QA folders
+  // living in the shared/prod workspace are removed.
+  const qaFolders = await sql`select id from folders where name like 'QA_%'`;
+  if (qaFolders.length > 0) {
+    const ids = qaFolders.map((r) => r.id);
+    await sql`delete from folders where id = any(${ids})`;
+    console.log(`  Deleted ${qaFolders.length} QA_* folders`);
   }
 
   // QA_* workspaces (cascades workspace_members).

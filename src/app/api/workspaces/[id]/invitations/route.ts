@@ -10,7 +10,7 @@ import {
   notifications,
   type WorkspaceRole,
 } from "@/lib/db/schema";
-import { getAuthz, canManageWorkspace } from "@/lib/authz";
+import { getAuthz, canManageWorkspace, grantAllFolders } from "@/lib/authz";
 import { sendInviteEmail, buildInviteUrl } from "@/lib/mail";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -161,6 +161,10 @@ export async function POST(request: Request, ctx: RouteContext) {
           role: parsed.data.role as WorkspaceRole,
         })
         .onConflictDoNothing();
+
+      // Existing users auto-added can see the current folders until the owner
+      // narrows their access.
+      await grantAllFolders(id, existingUser.id);
 
       await db.insert(notifications).values({
         userId: existingUser.id,

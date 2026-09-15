@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { pageBlocks, pages } from "@/lib/db/schema";
 import { getAuthz, canViewProject } from "@/lib/authz";
@@ -28,7 +28,9 @@ export async function GET(request: Request, ctx: RouteContext) {
         notionPageId: pages.notionPageId,
       })
       .from(pages)
-      .where(eq(pages.parentId, id))
+      .where(
+        and(eq(pages.parentId, id), eq(pages.parentType, "project"))
+      )
       .orderBy(asc(pages.position));
 
     const pageIds = projectPages.map((p) => p.id);

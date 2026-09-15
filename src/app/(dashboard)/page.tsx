@@ -6,7 +6,7 @@ import { projects, hostingClients } from "@/lib/db/schema";
 import {
   getAuthz,
   getAccessibleProjectIds,
-  getAccessibleWorkspaceIds,
+  getAccessibleHostingClientIds,
 } from "@/lib/authz";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -14,50 +14,46 @@ export default async function DashboardPage() {
   const authz = await getAuthz();
   if (!authz) redirect("/login");
 
-  const workspaceIds = await getAccessibleWorkspaceIds(authz);
-
   const ids = await getAccessibleProjectIds(authz);
   const scoped = ids.length > 0 ? inArray(projects.id, ids) : undefined;
-  const hostingWhere =
-    workspaceIds.length > 0 ? inArray(hostingClients.workspaceId, workspaceIds) : undefined;
+  const hostingIds = await getAccessibleHostingClientIds(authz);
+  const hostingScoped =
+    hostingIds.length > 0 ? inArray(hostingClients.id, hostingIds) : undefined;
 
   const [totalProjects, activeProjects, totalHosting, doneProjects] =
     scoped
       ? await Promise.all([
-          db.select().from(projects).where(scoped),
-          db
-            .select()
-            .from(projects)
-            .where(scoped && eq(projects.status, "in_progress")),
-          hostingWhere
-            ? db.select().from(hostingClients).where(hostingWhere)
-            : Promise.resolve([]),
-          db.select().from(projects).where(scoped && eq(projects.status, "done")),
+          db.$count(projects, scoped),
+          db.$count(projects, scoped && eq(projects.status, "in_progress")),
+          hostingScoped
+            ? db.$count(hostingClients, hostingScoped)
+            : Promise.resolve(0),
+          db.$count(projects, scoped && eq(projects.status, "done")),
         ])
-      : [[], [], [], []];
+      : [0, 0, 0, 0];
 
   const stats = [
     {
       title: "Total Projects",
-      value: totalProjects.length,
+      value: totalProjects,
       icon: FolderKanban,
-      description: `${activeProjects.length} in progress`,
+      description: `${activeProjects} in progress`,
     },
     {
       title: "Hosting Clients",
-      value: totalHosting.length,
+      value: totalHosting,
       icon: Globe,
       description: "Tracked domains",
     },
     {
       title: "Done",
-      value: doneProjects.length,
+      value: doneProjects,
       icon: CircleCheck,
       description: "Completed projects",
     },
     {
       title: "In Progress",
-      value: activeProjects.length,
+      value: activeProjects,
       icon: Clock,
       description: "Active work",
     },

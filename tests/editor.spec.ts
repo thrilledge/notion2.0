@@ -202,4 +202,101 @@ test.describe("project editor", () => {
 
     await deleteProject(page, projectId);
   });
+
+  test("typed text shows a real Saved indicator and survives refresh", async ({
+    page,
+  }) => {
+    await signIn(page, "owner@test.local", "TestOwner123!");
+
+    const projectId = await createProject(page, "QA_EDITOR_PERSIST");
+    await addBlock(page, projectId, [{ text: "original line" }]);
+    await openProjectPage(page, projectId);
+
+    const ed = editor(page);
+    await ed.click();
+    await ed.press("Control+End");
+    await ed.type(" TYPED-EXTRA");
+
+    // The save indicator must reflect a confirmed DB write.
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+
+    // Reload — the change must still be present (data survives refresh).
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const ed2 = editor(page);
+    await ed2.waitFor({ timeout: 15000 });
+    await expect(ed2).toContainText("TYPED-EXTRA", { timeout: 15000 });
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await sql`select count(*)::int as c from page_blocks where page_id in (select id from pages where parent_id = ${projectId})`
+          )[0].c,
+        { timeout: 10000 }
+      )
+      .toBe(1);
+
+    await deleteProject(page, projectId);
+  });
+
+  test("failed save shows Retry and recovers without losing data", async ({
+    page,
+  }) => {
+    await signIn(page, "owner@test.local", "TestOwner123!");
+
+    const projectId = await createProject(page, "QA_EDITOR_RETRY");
+    await addBlock(page, projectId, [{ text: "will become robust" }]);
+    await openProjectPage(page, projectId);
+
+    // Fail the very first block update that tries to land.
+    let blockedOnce = false;
+    await page.route("**/api/projects/*/blocks", async (route) => {
+      if (!blockedOnce && route.request().method() === "PATCH") {
+        blockedOnce = true;
+        await route.abort();
+      } else {
+        await route.continue();
+      }
+    });
+
+    const ed = editor(page);
+    await ed.click();
+    await ed.press("Control+End");
+    await ed.type(" ROBUST-TEXT");
+
+    // The editor must surface the failure instead of silently dropping it.
+    await expect(page.getByText(/Saving failed/)).toBeVisible({
+      timeout: 15000,
+    });
+
+    await page.unroute("**/api/projects/*/blocks");
+    await page.getByRole("button", { name: "Retry" }).click();
+
+    // Retry lands; now we must get a confirmed "Saved".
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+
+    // The previously-failed change must be in the DB and survive refresh.
+    await expect
+      .poll(
+        async () =>
+          (
+            await sql`select content::text as content from page_blocks where page_id in (select id from pages where parent_id = ${projectId}) and content::text like '%ROBUST-TEXT%'`
+          ).length,
+        { timeout: 15000 }
+      )
+      .toBe(1);
+
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const ed2 = editor(page);
+    await ed2.waitFor({ timeout: 15000 });
+    await expect(ed2).toContainText("ROBUST-TEXT", { timeout: 15000 });
+
+    await deleteProject(page, projectId);
+  });
 });

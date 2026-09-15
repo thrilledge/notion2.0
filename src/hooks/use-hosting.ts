@@ -1,6 +1,11 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type UseQueryOptions,
+} from "@tanstack/react-query";
 import type { HostingClient } from "@/lib/db/schema";
 
 export type HostingInput = Partial<Omit<HostingClient, "dueDate">> & {
@@ -11,6 +16,8 @@ interface ListParams {
   status?: string;
   result?: string;
   assigneeId?: string;
+  folderId?: string;
+  workspaceId?: string;
   search?: string;
   limit?: number;
   offset?: number;
@@ -40,10 +47,14 @@ async function fetchHosting(
   return res.json();
 }
 
-export function useHostingClients(params: ListParams = {}) {
+export function useHostingClients(
+  params: ListParams = {},
+  options?: Omit<UseQueryOptions<ListResponse, Error>, "queryKey" | "queryFn">
+) {
   return useQuery({
     queryKey: ["hosting", params],
     queryFn: () => fetchHosting(params),
+    ...options,
   });
 }
 

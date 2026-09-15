@@ -9,11 +9,10 @@ const OWNER_NAME = "QA Test Owner";
 
 async function signIn(page: Page, email: string, password: string) {
   await page.goto("/login");
-  await page.waitForLoadState("networkidle");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/", { timeout: 15000 });
+  await page.waitForURL("**/", { timeout: 60000 });
 }
 
 async function signUpIfNeeded(

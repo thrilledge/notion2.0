@@ -195,6 +195,90 @@ export const hostingClients = pgTable(
   ]
 );
 
+export const folders = pgTable(
+  "folders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["project", "hosting_client"] })
+      .notNull()
+      .default("project"),
+    // System folders get a stable code ("all_projects", "side_projects",
+    // "hosting_clients"); custom folders have NULL. Used to derive default
+    // content so nothing is ever lost for the system views.
+    code: text("code"),
+    sortOrder: doublePrecision("sort_order").notNull().default(0),
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("folders_workspace_idx").on(t.workspaceId),
+    uniqueIndex("folders_workspace_code_idx").on(t.workspaceId, t.code),
+  ]
+);
+
+/** Explicit memberships for custom folders. System folders derive content. */
+export const folderProjects = pgTable(
+  "folder_projects",
+  {
+    folderId: uuid("folder_id")
+      .notNull()
+      .references(() => folders.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.folderId, t.projectId] }),
+    index("folder_projects_folder_idx").on(t.folderId),
+    index("folder_projects_project_idx").on(t.projectId),
+  ]
+);
+
+/** Explicit memberships for custom hosting-client folders. */
+export const folderHostingClients = pgTable(
+  "folder_hosting_clients",
+  {
+    folderId: uuid("folder_id")
+      .notNull()
+      .references(() => folders.id, { onDelete: "cascade" }),
+    hostingClientId: uuid("hosting_client_id")
+      .notNull()
+      .references(() => hostingClients.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.folderId, t.hostingClientId] }),
+    index("folder_hosting_folder_idx").on(t.folderId),
+    index("folder_hosting_client_idx").on(t.hostingClientId),
+  ]
+);
+
+/** Per-folder user access. A user only sees folders they are granted. */
+export const folderAccess = pgTable(
+  "folder_access",
+  {
+    folderId: uuid("folder_id")
+      .notNull()
+      .references(() => folders.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.folderId, t.userId] }),
+    index("folder_access_user_idx").on(t.userId),
+  ]
+);
+
 export type PageParentType =
   | "project"
   | "hosting_client"
@@ -480,3 +564,9 @@ export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
 export type Invitation = typeof invitations.$inferSelect;
 export type NewInvitation = typeof invitations.$inferInsert;
+export type Folder = typeof folders.$inferSelect;
+export type NewFolder = typeof folders.$inferInsert;
+export type FolderAccess = typeof folderAccess.$inferSelect;
+export type NewFolderAccess = typeof folderAccess.$inferInsert;
+export type FolderProject = typeof folderProjects.$inferSelect;
+export type FolderHostingClient = typeof folderHostingClients.$inferSelect;

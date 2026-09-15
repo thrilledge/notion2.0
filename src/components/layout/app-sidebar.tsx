@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Globe, Users, FileText, CalendarDays, BookOpen, Rocket, Settings } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Globe, Users, FileText, CalendarDays, BookOpen, Rocket, Settings, Folder } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import {
   Sidebar,
@@ -31,23 +31,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LogOut, ChevronsUpDown } from "lucide-react";
 
-const mainNav = [
-  { title: "Dashboard", href: "/", icon: LayoutDashboard },
-  {
-    title: "Projects",
-    href: "/projects",
-    icon: FolderKanban,
-    children: [
-      { title: "All Projects", href: "/projects" },
-      { title: "Side Projects", href: "/side-projects" },
-      { title: "Trash", href: "/trash" },
-    ],
-  },
-  { title: "Hosting Clients", href: "/hosting", icon: Globe },
-  { title: "Docs", href: "/docs", icon: FileText },
-  { title: "Meetings", href: "/meetings", icon: CalendarDays },
-  { title: "Wiki", href: "/wiki", icon: BookOpen },
-];
+export type SidebarFolder = {
+  id: string;
+  name: string;
+  kind: "project" | "hosting_client";
+  code: string | null;
+};
 
 function initials(name: string | undefined) {
   if (!name) return "?";
@@ -62,9 +51,11 @@ function initials(name: string | undefined) {
 export function AppSidebar({
   user,
   canManageTeam,
+  folders,
 }: {
   user: User;
   canManageTeam: boolean;
+  folders: SidebarFolder[];
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -73,14 +64,76 @@ export function AppSidebar({
     if (isMobile) setOpenMobile(false);
   };
 
+  const canSeeAllProjects = folders.some((f) => f.code === "all_projects");
+  const canSeeSideProjects = folders.some((f) => f.code === "side_projects");
+  const customProjectFolders = folders.filter(
+    (f) => !f.code && f.kind === "project"
+  );
+  const customHostingFolders = folders.filter(
+    (f) => !f.code && f.kind === "hosting_client"
+  );
+  // A member may only hold custom hosting-folder grants (no system hosting
+  // folder); the Hosting section must still appear so those folders are
+  // reachable.
+  const canSeeHosting =
+    folders.some((f) => f.code === "hosting_clients") ||
+    customHostingFolders.length > 0;
+
+  const projectsChildren = [
+    ...(canSeeAllProjects ? [{ title: "All Projects", href: "/projects" }] : []),
+    ...(canSeeSideProjects ? [{ title: "Side Projects", href: "/side-projects" }] : []),
+    ...customProjectFolders.map((f) => ({
+      title: f.name,
+      href: `/folders/${f.id}`,
+    })),
+    { title: "Trash", href: "/trash" },
+  ];
+
+  const hostingChildren = customHostingFolders.map((f) => ({
+    title: f.name,
+    href: `/folders/${f.id}`,
+  }));
+
+  const staticNav = [
+    { title: "Dashboard", href: "/", icon: LayoutDashboard },
+    ...(projectsChildren.length > 1
+      ? [
+          {
+            title: "Projects",
+            href: "/projects",
+            icon: FolderKanban,
+            children: projectsChildren,
+          },
+        ]
+      : []),
+    ...(canSeeHosting
+      ? [
+          hostingChildren.length > 0
+            ? {
+                title: "Hosting Clients",
+                href: "/hosting",
+                icon: Globe,
+                children: [
+                  { title: "All Hosting Clients", href: "/hosting" },
+                  ...hostingChildren,
+                ],
+              }
+            : { title: "Hosting Clients", href: "/hosting", icon: Globe },
+        ]
+      : []),
+    { title: "Docs", href: "/docs", icon: FileText },
+    { title: "Meetings", href: "/meetings", icon: CalendarDays },
+    { title: "Wiki", href: "/wiki", icon: BookOpen },
+  ];
+
   const nav = canManageTeam
     ? [
-        ...mainNav,
+        ...staticNav,
         { title: "Team", href: "/team", icon: Users },
         { title: "Settings", href: "/settings", icon: Settings },
       ]
     : [
-        ...mainNav,
+        ...staticNav,
         { title: "Settings", href: "/settings", icon: Settings },
       ];
 
